@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "doodles/*"
+]
+resolver = "2"
+
+[workspace.dependencies]
