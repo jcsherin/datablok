@@ -11,22 +11,31 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: sccache
+  SCCACHE_LOG: info
 
 jobs:
   build_and_test:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
-      # 1. Check out the repository code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Install the Rust toolchain
+      - name: Install sccache
+        run: cargo install sccache
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache sccache directory
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: ${{ runner.os }}-sccache-v1-${{ github.job }}
+
       # 3. Set up caching for dependencies to speed up future runs
-      - name: Cache dependencies
+      - name: Cache cargo dependencies
         uses: actions/cache@v4
         with:
           path: |
@@ -37,19 +46,17 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # 4. Check formatting
       - name: Check formatting
         run: cargo fmt -- --check
 
-      # 5. Run Clippy (a powerful linter)
-      # The "-D warnings" flag treats all warnings as errors, failing the build.
       - name: Run Clippy
         run: cargo clippy --workspace -- -D warnings
 
-      # 6. Run tests
       - name: Run tests
         run: cargo test --workspace
 
-      # 7. Build the project
       - name: Build project
         run: cargo build --workspace
+
+      - name: Show sccache stats
+        run: sccache --show-stats
