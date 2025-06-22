@@ -1,6 +1,8 @@
-use clap::{ArgAction, Parser};
-use log::{info, warn};
-use std::env;
+use clap::Parser;
+use log::{LevelFilter, info};
+use parquet::arrow::ProjectionMask;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use std::fs::File;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -10,25 +12,45 @@ struct Cli {
 
     #[clap(short, long)]
     output: String,
-
-    #[clap(short, long, action = ArgAction::Count)]
-    verbosity: u8,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
+    env_logger::Builder::new()
+        .filter_level(LevelFilter::Info)
+        .init();
 
-    // A simple `cargo run` will fail in CI due to missing required arguments.
-    // This hook detects that no-argument case and exits successfully before parsing.
-    if env::args().len() == 1 {
-        warn!("No CLI arguments provided, exiting gracefully.");
+    let cli = Cli::parse();
 
-        return Ok(());
+    info!("Input file: {}", cli.input);
+    info!("Output file: {}", cli.output);
+
+    // Columns to extract from input hits.parquet
+    const COLUMN_NAMES: &[&str] = &[
+        "WatchID",
+        "Title",
+        "EventTime",
+        "UserID",
+        "URL",
+        "SearchPhrase",
+    ];
+
+    // Reading Parquet file into Arrow RecordBatch
+    // https://arrow.apache.org/rust/parquet/arrow/index.html#example-reading-parquet-file-into-arrow-recordbatch
+    let input_file = File::open(&cli.input)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(input_file).unwrap();
+
+    let projection_mask =
+        ProjectionMask::columns(builder.parquet_schema(), COLUMN_NAMES.iter().copied());
+    let reader = builder.with_projection(projection_mask).build()?;
+
+    let mut row_count = 0;
+    for batch_result in reader {
+        let record_batch = batch_result?;
+        row_count += record_batch.num_rows();
     }
 
-    let _cli = Cli::parse();
-    info!("Hello, world!");
+    info!("Total rows read: {}", row_count);
 
     Ok(())
 }
