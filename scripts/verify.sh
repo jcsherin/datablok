@@ -10,7 +10,7 @@ run_command() {
 
 
 QUIET_FLAG="--quiet"
-DOODLE_NAME=""
+PACKAGE_NAME=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -19,8 +19,8 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     *)
-      if [ -z "$DOODLE_NAME" ]; then
-        DOODLE_NAME="$1"
+      if [ -z "$PACKAGE_NAME" ]; then
+        PACKAGE_NAME="$1"
       fi
       shift
       ;;
@@ -28,17 +28,17 @@ while [ "$#" -gt 0 ]; do
 done
 
 
-# Show usage if DOODLE_NAME is not provided
-if [ -z "$DOODLE_NAME" ]; then
-  printf "Usage: %s [--verbose] <doodle-name>\n" "$0" >&2
+# Show usage if PACKAGE_NAME is not provided
+if [ -z "$PACKAGE_NAME" ]; then
+  printf "Usage: %s [--verbose] <package-name>\n" "$0" >&2
   printf "Example (Quiet): %s hello-datafusion\n" "$0" >&2
   printf "Example (Verbose): %s --verbose hello-datafusion\n" "$0" >&2
   exit 1
 fi
 
-run_command cargo fmt --check -p "$DOODLE_NAME"
-run_command cargo check $QUIET_FLAG -p "$DOODLE_NAME"
-run_command cargo build $QUIET_FLAG -p "$DOODLE_NAME"
-run_command cargo run -p "$DOODLE_NAME"
+run_command cargo fmt --check -p "$PACKAGE_NAME"
+run_command cargo check $QUIET_FLAG -p "$PACKAGE_NAME"
+run_command cargo build $QUIET_FLAG -p "$PACKAGE_NAME"
+run_command cargo run -p "$PACKAGE_NAME"
 
-printf "\n🎉 All steps completed successfully for '%s'!\n" "$DOODLE_NAME"
+printf "\n🎉 All steps completed successfully for '%s'!\n" "$PACKAGE_NAME"
