@@ -1,7 +1,9 @@
 use log::{debug, info};
 use std::fs;
+use tantivy::collector::TopDocs;
+use tantivy::query::QueryParser;
 use tantivy::schema::*;
-use tantivy::{Index, IndexWriter, doc};
+use tantivy::{Index, IndexWriter, ReloadPolicy, doc};
 use tempfile::TempDir;
 
 // https://github.com/quickwit-oss/tantivy/blob/main/examples/basic_search.rs
@@ -20,6 +22,7 @@ fn main() -> tantivy::Result<()> {
     let schema_json = serde_json::to_string_pretty(&schema)?;
     debug!("Schema: {}", schema_json);
 
+    // # Indexing documents
     let index = Index::create_in_dir(&index_path, schema.clone())?;
 
     // Budget for indexing in bytes -> `50MB`.
@@ -74,6 +77,46 @@ fn main() -> tantivy::Result<()> {
             Some(filename_ref.to_os_string())
         })
         .for_each(|file| info!("Found file: {:?}", file));
+
+    // # Searching
+    let reader = index
+        .reader_builder()
+        .reload_policy(ReloadPolicy::OnCommitWithDelay)
+        .try_into()?;
+
+    let searcher = reader.searcher();
+
+    // ## Query
+    let query_parser = QueryParser::for_index(&index, vec![title, body]);
+
+    let query = query_parser.parse_query("sea whale")?;
+
+    let top_docs = searcher.search(&query, &TopDocs::with_limit(10))?;
+
+    for (score, doc_address) in top_docs {
+        let retrieved_doc: TantivyDocument = searcher.doc(doc_address)?;
+        info!(
+            "score: {}, doc_address: {}",
+            score,
+            retrieved_doc.to_json(&schema)
+        );
+    }
+
+    let query = query_parser.parse_query("title:sea^20 body:whale^70")?;
+
+    let (score, doc_address) = searcher
+        .search(&query, &TopDocs::with_limit(1))?
+        .into_iter()
+        .next()
+        .unwrap();
+
+    let explanation = query.explain(&searcher, doc_address)?;
+
+    info!(
+        "score: {}, explanation: {}",
+        score,
+        explanation.to_pretty_json()
+    );
 
     Ok(())
 }
