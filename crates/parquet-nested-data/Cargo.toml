@@ -1,0 +1,10 @@
+[package]
+name = "parquet-nested-data"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arrow = { version = "55.0.0", default-features = false, features = ["prettyprint"] }
+env_logger = "0.11.8"
+log = "0.4.27"
+parquet = { version = "55.0.0", default-features = false, features = ["arrow"] }

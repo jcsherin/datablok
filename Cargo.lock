@@ -2247,6 +2247,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "parquet-nested-data"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "env_logger",
+ "log",
+ "parquet",
+]
+
+[[package]]
 name = "parse-zoneinfo"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
