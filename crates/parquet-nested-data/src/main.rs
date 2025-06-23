@@ -6,7 +6,9 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use datatypes::SchemaRef;
 use log::info;
+use parquet::arrow::ArrowWriter;
 use std::error::Error;
+use std::fs::File;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -219,7 +221,16 @@ fn create_record_batch(
     .map_err(Into::into)
 }
 
-fn main() {
+fn write_parquet(file_path: &str, record_batch: RecordBatch) -> Result<(), Box<dyn Error>> {
+    let file = File::create(file_path)?;
+    let mut writer = ArrowWriter::try_new(file, record_batch.schema(), None)?;
+    writer.write(&record_batch)?;
+    writer.close()?;
+
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
@@ -230,6 +241,13 @@ fn main() {
     let schema = create_arrow_schema();
     info!("Created Arrow schema definition: {}", schema);
 
-    let record_batch = create_record_batch(schema, &contacts);
+    let record_batch = create_record_batch(schema, &contacts)?;
     info!("Created RecordBatch: {:?}", record_batch);
+
+    let file_path = "contacts.parquet";
+    write_parquet(file_path, record_batch)?;
+    info!("Created parquet here: {}", file_path);
+
+    info!("Fin.");
+    Ok(())
 }
