@@ -161,31 +161,17 @@ fn create_record_batch(
 ) -> Result<RecordBatch, Box<dyn Error>> {
     let mut name_builder = StringBuilder::new();
 
-    let phone_fields = match schema.field_with_name("phones")?.data_type() {
-        DataType::List(field) => match field.data_type() {
-            DataType::Struct(fields) => fields.clone(),
-            other => {
-                return Err(
-                    format!("Expected list of structs, but found list of {:?}", other).into(),
-                );
-            }
-        },
-        other => {
-            return Err(format!(
-                "Expected 'phones' fields to be a list, but found {:?}",
-                other
-            )
-            .into());
-        }
-    };
-
+    let phone_number_builder = StringBuilder::new();
+    let phone_type_builder = StringBuilder::new();
+    let phone_fields = vec![
+        Field::new("number", DataType::Utf8, true),
+        Field::new("phone_type", DataType::Utf8, true),
+    ];
     let phone_struct_builder = StructBuilder::new(
         phone_fields,
-        vec![
-            Box::new(StringBuilder::new()),
-            Box::new(StringBuilder::new()),
-        ],
+        vec![Box::new(phone_number_builder), Box::new(phone_type_builder)],
     );
+
     let mut phones_list_builder = ListBuilder::new(phone_struct_builder);
 
     for contact in contacts {
@@ -194,19 +180,20 @@ fn create_record_batch(
         match &contact.phones {
             None => phones_list_builder.append_null(),
             Some(phone_list) => {
-                phones_list_builder.append(true);
                 let struct_builder = phones_list_builder.values();
+
                 for phone in phone_list {
                     struct_builder.append(true);
-                    struct_builder
-                        .field_builder::<StringBuilder>(0)
-                        .unwrap()
-                        .append_option(phone.number.as_deref());
-                    struct_builder
-                        .field_builder::<StringBuilder>(1)
-                        .unwrap()
-                        .append_option(phone.phone_type.as_ref().map(|pt| pt.as_str()));
+
+                    let number_builder = struct_builder.field_builder::<StringBuilder>(0).unwrap();
+                    number_builder.append_option(phone.number.as_deref());
+
+                    let type_builder = struct_builder.field_builder::<StringBuilder>(1).unwrap();
+                    let phone_type_str = phone.phone_type.as_ref().map(|pt| pt.as_str());
+                    type_builder.append_option(phone_type_str);
                 }
+
+                phones_list_builder.append(true);
             }
         }
     }
