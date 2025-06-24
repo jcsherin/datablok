@@ -1,6 +1,6 @@
 // Nested Data Structure
 
-use arrow::array::{ArrayRef, ListBuilder, StringBuilder, StructBuilder};
+use arrow::array::{ListBuilder, StringBuilder, StructBuilder};
 use arrow::datatypes;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
@@ -140,20 +140,33 @@ fn create_data() -> Vec<Contact> {
     ]
 }
 
-fn create_arrow_schema() -> SchemaRef {
-    let phone_fields = vec![
-        Field::new("number", DataType::Utf8, true),
-        Field::new("phone_type", DataType::Utf8, true),
-    ];
-    let phone_struct = DataType::Struct(phone_fields.into());
+fn get_phone_fields() -> Vec<Arc<Field>> {
+    vec![
+        Arc::from(Field::new("number", DataType::Utf8, true)),
+        Arc::from(Field::new("phone_type", DataType::Utf8, true)),
+    ]
+}
 
+fn get_contact_fields() -> Vec<Arc<Field>> {
+    let phone_struct = DataType::Struct(get_phone_fields().into());
     let phones_list_field = Field::new("item", phone_struct, true);
 
-    Arc::new(Schema::new(vec![
-        Field::new("name", DataType::Utf8, true),
-        Field::new("phones", DataType::List(Arc::new(phones_list_field)), true),
-    ]))
+    vec![
+        Arc::from(Field::new("name", DataType::Utf8, true)),
+        Arc::from(Field::new(
+            "phones",
+            DataType::List(Arc::new(phones_list_field)),
+            true,
+        )),
+    ]
 }
+
+fn create_arrow_schema() -> SchemaRef {
+    Arc::new(Schema::new(get_contact_fields()))
+}
+
+const PHONE_NUMBER_FIELD_INDEX: usize = 0;
+const PHONE_TYPE_FIELD_INDEX: usize = 1;
 
 fn create_record_batch(
     schema: SchemaRef,
@@ -163,12 +176,8 @@ fn create_record_batch(
 
     let phone_number_builder = StringBuilder::new();
     let phone_type_builder = StringBuilder::new();
-    let phone_fields = vec![
-        Field::new("number", DataType::Utf8, true),
-        Field::new("phone_type", DataType::Utf8, true),
-    ];
     let phone_struct_builder = StructBuilder::new(
-        phone_fields,
+        get_phone_fields(),
         vec![Box::new(phone_number_builder), Box::new(phone_type_builder)],
     );
 
@@ -177,35 +186,34 @@ fn create_record_batch(
     for contact in contacts {
         name_builder.append_option(contact.name.as_deref());
 
-        match &contact.phones {
-            None => phones_list_builder.append_null(),
-            Some(phone_list) => {
-                let struct_builder = phones_list_builder.values();
+        if let Some(phones) = &contact.phones {
+            let struct_builder = phones_list_builder.values();
 
-                for phone in phone_list {
-                    struct_builder.append(true);
+            for phone in phones {
+                struct_builder.append(true);
 
-                    let number_builder = struct_builder.field_builder::<StringBuilder>(0).unwrap();
-                    number_builder.append_option(phone.number.as_deref());
-
-                    let type_builder = struct_builder.field_builder::<StringBuilder>(1).unwrap();
-                    let phone_type_str = phone.phone_type.as_ref().map(|pt| pt.as_str());
-                    type_builder.append_option(phone_type_str);
-                }
-
-                phones_list_builder.append(true);
+                // Here unwrap() is safe because it matches the index of `number` and `phone_type`
+                // fields which we get from `get_phone_fields()`.
+                struct_builder
+                    .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
+                    .unwrap()
+                    .append_option(phone.number.as_deref());
+                struct_builder
+                    .field_builder::<StringBuilder>(PHONE_TYPE_FIELD_INDEX)
+                    .unwrap()
+                    .append_option(phone.phone_type.as_ref().map(|x| x.as_str()));
             }
+
+            phones_list_builder.append(true);
+        } else {
+            phones_list_builder.append_null();
         }
     }
 
     let name_array = Arc::new(name_builder.finish());
     let phones_array = Arc::new(phones_list_builder.finish());
 
-    RecordBatch::try_new(
-        schema,
-        vec![name_array as ArrayRef, phones_array as ArrayRef],
-    )
-    .map_err(Into::into)
+    RecordBatch::try_new(schema, vec![name_array, phones_array]).map_err(Into::into)
 }
 
 fn write_parquet(file_path: &str, record_batch: RecordBatch) -> Result<(), Box<dyn Error>> {
