@@ -39,6 +39,7 @@ fi
 run_command cargo fmt --check -p "$PACKAGE_NAME"
 run_command cargo check $QUIET_FLAG -p "$PACKAGE_NAME"
 run_command cargo clippy $QUIET_FLAG -p "$PACKAGE_NAME" -- -D warnings
+run_command cargo test $QUIET_FLAG -p "$PACKAGE_NAME"
 run_command cargo build $QUIET_FLAG -p "$PACKAGE_NAME"
 run_command cargo run -p "$PACKAGE_NAME"
 
