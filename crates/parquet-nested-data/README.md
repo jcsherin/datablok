@@ -39,9 +39,7 @@ To check the code for formatting, linting, and other issues, you can use the ver
 
 ### Expected Output
 
-Running the experiment will create a `contacts.parquet` file in root directory of this repository. You can verify the
-contents using this wonderful online parquet
-viewer: [https://parquet-viewer.xiangpeng.systems/](https://parquet-viewer.xiangpeng.systems/)
+Running the experiment will create a `contacts.parquet` file in root directory of this repository.
 
 ```text
 [timestamp INFO  parquet_nested_data] Created 5 contacts.
@@ -50,9 +48,16 @@ viewer: [https://parquet-viewer.xiangpeng.systems/](https://parquet-viewer.xiang
 [timestamp INFO  parquet_nested_data] Fin.
 ```
 
+The structure of the generated `contacts.parquet` file can be inspected with this wonderful online
+Parquet viewer: [https://parquet-viewer.xiangpeng.systems/](https://parquet-viewer.xiangpeng.systems/). The nested data
+will be represented as follows:
+
+![Screenshot showing the nested structure of contacts.parquet in an online viewer](./parquet_viewer.png)
+
 ### DuckDB SQL
 
-An example SQL query executed on `contacts.parquet` using __DuckDB__.
+Another way to consume and analyze this file is to query it directly. An engine like __DuckDB__ can flatten the nested
+phones list on the fly, as shown in this example:
 
 ```text
 D select name, unnest(phones, recursive := true) from read_parquet('contacts.parquet');
