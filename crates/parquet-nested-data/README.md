@@ -5,6 +5,23 @@ Arrow__ memory format as an intermediate representation.
 
 It demonstrates the Record Shredding API for storing nested objects like `Contact` in a columnar format like Parquet.
 
+```rust
+struct Contact {
+    name: Option<String>,
+    phones: Option<Vec<Phone>>,
+}
+
+struct Phone {
+    number: Option<String>,
+    phone_type: Option<PhoneType>,
+}
+
+enum PhoneType {
+    Home,
+    Work,
+}
+```
+
 ### How to Run
 
 From the root of the monorepo, you can run this experiment using its package name. The `RUST_LOG` variable is used to
@@ -38,7 +55,6 @@ viewer: [https://parquet-viewer.xiangpeng.systems/](https://parquet-viewer.xiang
 An example SQL query executed on `contacts.parquet` using __DuckDB__.
 
 ```text
-// @formatter:off
 D select name, unnest(phones, recursive := true) from read_parquet('contacts.parquet');
 ┌─────────┬──────────┬────────────┐
 │  name   │  number  │ phone_type │
@@ -49,7 +65,6 @@ D select name, unnest(phones, recursive := true) from read_parquet('contacts.par
 │ Diana   │ 555-9999 │ Work       │
 │ NULL    │ NULL     │ Home       │
 └─────────┴──────────┴────────────┘
-// @formatter:on
 ```
 
 _(Note: The query and output above were generated with the following DuckDB version)_
