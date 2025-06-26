@@ -31,18 +31,18 @@ _(Note: Log timestamps, temporary index path, hashed filenames will differ on yo
 from the tantivy library have been omitted below for clarity.)_
 
 ```text
-[<tz> INFO  hello_tantivy] Index created at: /path/to/tmp/.tmpXXXXXX
-[<tz> INFO  tantivy::indexer::segment_updater] save metas
-[<tz> INFO  tantivy::indexer::index_writer] Preparing commit
-[<tz> INFO  tantivy::indexer::index_writer] Prepared commit 6
-[<tz> INFO  tantivy::indexer::prepared_commit] committing 6
-[<tz> INFO  tantivy::indexer::segment_updater] save metas
-[<tz> INFO  tantivy::indexer::segment_updater] Running garbage collection
-[<tz> INFO  tantivy::directory::managed_directory] Garbage collect
-[<tz> INFO  hello_tantivy] Commit: 3 documents written to index
+[timestamp INFO  hello_tantivy] Index created at: /path/to/tmp/.tmpXXXXXX
+[timestamp INFO  tantivy::indexer::segment_updater] save metas
+[timestamp INFO  tantivy::indexer::index_writer] Preparing commit
+[timestamp INFO  tantivy::indexer::index_writer] Prepared commit 6
+[timestamp INFO  tantivy::indexer::prepared_commit] committing 6
+[timestamp INFO  tantivy::indexer::segment_updater] save metas
+[timestamp INFO  tantivy::indexer::segment_updater] Running garbage collection
+[timestamp INFO  tantivy::directory::managed_directory] Garbage collect
+[timestamp INFO  hello_tantivy] Commit: 3 documents written to index
 ...
-[<tz> INFO  hello_tantivy] Found file: "meta.json"
+[timestamp INFO  hello_tantivy] Found file: "meta.json"
 ...
-[<tz> INFO  hello_tantivy] score: 0.8781843, doc_address: {"title":["The Old Man and the Sea"]}
+[timestamp INFO  hello_tantivy] score: 0.8781843, doc_address: {"title":["The Old Man and the Sea"]}
 ...
 ```
