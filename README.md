@@ -5,7 +5,7 @@ A monorepo experimenting with the internals of data systems in Rust, focusing on
 
 ## Usage
 
-To run a specific doodle, use the `-p` or `--package` flag for cargo from the root of the repository.
+To run a specific experiment, use the `-p` or `--package` flag for cargo from the root of the repository.
 
 For example, to run the `hello-datafusion` doodle:
 
@@ -13,3 +13,15 @@ For example, to run the `hello-datafusion` doodle:
 cargo run -p hello-datafusion
 ```
 
+## Local Development
+
+The `verify.sh` script mirrors the CI pipeline. Running this script is a good practice before pushing code changes to
+prevent failures in CI. Catching errors locally is much faster than waiting for the CI pipeline to discover them.
+
+```zsh
+# Run all checks on the 'hello-datafusion' package
+./scripts/verify.sh hello-datafusion
+
+# For a more detailed output, use the --verbose flag
+./scripts/verify.sh --verbose hello-datafusion
+```
