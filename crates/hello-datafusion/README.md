@@ -1,6 +1,6 @@
 ## Hello, DataFusion!
 
-This experiment demonstrates the most basic setup of an Apache DataFusion SessionContext. It serves as the "hello,
+This experiment demonstrates the most basic setup of an Apache DataFusion `SessionContext`. It serves as the "hello,
 world!" of this repository.
 
 ### How to Run
