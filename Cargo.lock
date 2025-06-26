@@ -1554,6 +1554,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "datafusion",
+ "env_logger",
+ "log",
  "tokio",
 ]
 

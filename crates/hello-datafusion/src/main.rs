@@ -1,9 +1,12 @@
 use anyhow::Result;
 use datafusion::prelude::*;
+use log::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("Hello, DataFusion! (With Tokio and Anyhow)");
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    info!("Hello, DataFusion!\n");
 
     // Create a new DataFusion session context
     let ctx = SessionContext::new();
@@ -11,10 +14,10 @@ async fn main() -> Result<()> {
     // Get the configuration state
     let state = ctx.state();
 
-    println!("\nDataFusion Session Configuration:");
-    println!("---------------------------------");
-    println!("Batch Size: {}", state.config().batch_size());
-    println!("Target Partitions: {}", state.config().target_partitions());
+    info!("DataFusion Session Configuration:");
+    info!("---------------------------------");
+    info!("Batch Size: {}", state.config().batch_size());
+    info!("Target Partitions: {}", state.config().target_partitions());
 
     let tz = state
         .config()
@@ -23,9 +26,9 @@ async fn main() -> Result<()> {
         .time_zone
         .as_deref()
         .unwrap_or("None");
-    println!("Timezone: {}", tz);
+    info!("Timezone: {}\n", tz);
 
-    println!("\nSetup is working correctly!");
+    info!("Setup is working correctly!\n");
 
     Ok(())
 }
