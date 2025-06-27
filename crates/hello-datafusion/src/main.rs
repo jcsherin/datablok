@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
         .time_zone
         .as_deref()
         .unwrap_or("None");
-    info!("Timezone: {}\n", tz);
+    info!("Timezone: {tz}\n");
 
     info!("Setup is working correctly!\n");
 

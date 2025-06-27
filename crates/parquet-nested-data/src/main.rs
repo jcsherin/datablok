@@ -234,14 +234,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     info!("Created {} contacts.", contacts.len());
 
     let schema = create_arrow_schema();
-    info!("Created Arrow schema definition: {}", schema);
+    info!("Created Arrow schema definition: {schema}");
 
     let record_batch = create_record_batch(schema, &contacts)?;
-    info!("Created RecordBatch: {:?}", record_batch);
+    info!("Created RecordBatch: {record_batch:?}");
 
     let file_path = "contacts.parquet";
     write_parquet(file_path, record_batch)?;
-    info!("Created parquet here: {}", file_path);
+    info!("Created parquet here: {file_path}");
 
     info!("Fin.");
     Ok(())

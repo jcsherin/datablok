@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
         row_count += record_batch.num_rows();
     }
 
-    info!("Total rows read: {}", row_count);
+    info!("Total rows read: {row_count}");
 
     Ok(())
 }

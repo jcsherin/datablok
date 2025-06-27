@@ -20,7 +20,7 @@ fn main() -> tantivy::Result<()> {
 
     let schema = schema_builder.build();
     let schema_json = serde_json::to_string_pretty(&schema)?;
-    debug!("Schema: {}", schema_json);
+    debug!("Schema: {schema_json}");
 
     // # Indexing documents
     let index = Index::create_in_dir(&index_path, schema.clone())?;
@@ -76,7 +76,7 @@ fn main() -> tantivy::Result<()> {
             let filename_ref = path.file_name()?;
             Some(filename_ref.to_os_string())
         })
-        .for_each(|file| info!("Found file: {:?}", file));
+        .for_each(|file| info!("Found file: {file:?}"));
 
     // # Searching
     let reader = index
