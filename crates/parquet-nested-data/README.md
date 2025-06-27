@@ -56,8 +56,8 @@ will be represented as follows:
 
 ### DuckDB SQL
 
-Another way to consume and analyze this file is to query it directly. An engine like __DuckDB__ can flatten the nested
-phones list on the fly, as shown in this example:
+Another way is to query the file directly using SQL and the `UNNEST` function to flatten the nested data structures
+stored in the Parquet file.
 
 ```text
 D select name, unnest(phones, recursive := true) from read_parquet('contacts.parquet');
@@ -67,6 +67,32 @@ D select name, unnest(phones, recursive := true) from read_parquet('contacts.par
 ├─────────┼──────────┼────────────┤
 │ Alice   │ 555-1234 │ Home       │
 │ Alice   │ 555-5678 │ Work       │
+│ Diana   │ 555-9999 │ Work       │
+│ NULL    │ NULL     │ Home       │
+└─────────┴──────────┴────────────┘
+```
+
+The previous query returns rows only if `phones` is present. To return all the contacts, we need to join each one with
+the rows generated from its flattened `phones` list. This is fundamentally a `LATERAL` join.
+
+```text
+D SELECT
+      t.name,
+      p.phone.number,
+      p.phone.phone_type
+  FROM
+      read_parquet('contacts.parquet') AS t
+  LEFT JOIN
+      UNNEST(t.phones) AS p(phone) ON true
+  ORDER BY t.name;
+┌─────────┬──────────┬────────────┐
+│  name   │  number  │ phone_type │
+│ varchar │ varchar  │  varchar   │
+├─────────┼──────────┼────────────┤
+│ Alice   │ 555-1234 │ Home       │
+│ Alice   │ 555-5678 │ Work       │
+│ Bob     │ NULL     │ NULL       │
+│ Charlie │ NULL     │ NULL       │
 │ Diana   │ 555-9999 │ Work       │
 │ NULL    │ NULL     │ Home       │
 └─────────┴──────────┴────────────┘
