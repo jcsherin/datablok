@@ -7,24 +7,10 @@ use arrow::record_batch::RecordBatch;
 use datatypes::SchemaRef;
 use log::info;
 use parquet::arrow::ArrowWriter;
+use parquet_common::contact::PhoneType;
 use std::error::Error;
 use std::fs::File;
 use std::sync::Arc;
-
-#[derive(Debug, Clone, PartialEq)]
-enum PhoneType {
-    Home,
-    Work,
-}
-
-impl PhoneType {
-    fn as_str(&self) -> &str {
-        match self {
-            PhoneType::Home => "Home",
-            PhoneType::Work => "Work",
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Default)]
 struct Phone {

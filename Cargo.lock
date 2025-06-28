@@ -2249,6 +2249,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "parquet-common"
+version = "0.1.0"
+
+[[package]]
 name = "parquet-json-compare"
 version = "0.1.0"
 
@@ -2260,6 +2264,7 @@ dependencies = [
  "env_logger",
  "log",
  "parquet",
+ "parquet-common",
 ]
 
 [[package]]
