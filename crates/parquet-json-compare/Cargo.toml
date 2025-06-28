@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 parquet-common = { version = "0.1.0", path = "../parquet-common" }
+proptest = { version = "1.7.0", default-features = false, features = ["std"] }

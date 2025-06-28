@@ -1,5 +1,6 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PhoneType {
+    Mobile,
     Home,
     Work,
 }
@@ -7,6 +8,7 @@ pub enum PhoneType {
 impl PhoneType {
     pub fn as_str(&self) -> &str {
         match self {
+            PhoneType::Mobile => "Mobile",
             PhoneType::Home => "Home",
             PhoneType::Work => "Work",
         }
