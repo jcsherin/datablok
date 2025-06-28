@@ -2255,6 +2255,9 @@ version = "0.1.0"
 [[package]]
 name = "parquet-json-compare"
 version = "0.1.0"
+dependencies = [
+ "parquet-common",
+]
 
 [[package]]
 name = "parquet-nested-data"
