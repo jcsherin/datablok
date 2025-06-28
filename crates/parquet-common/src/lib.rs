@@ -1,16 +1,9 @@
 pub mod contact;
 
-// pub fn add(left: u64, right: u64) -> u64 {
-//     left + right
-// }
-//
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//
-//     #[test]
-//     fn it_works() {
-//         let result = add(2, 2);
-//         assert_eq!(result, 4);
-//     }
-// }
+pub mod prelude {
+    pub use super::contact::Contact;
+    pub use super::contact::ContactBuilder;
+    pub use super::contact::Phone;
+    pub use super::contact::PhoneBuilder;
+    pub use super::contact::PhoneType;
+}

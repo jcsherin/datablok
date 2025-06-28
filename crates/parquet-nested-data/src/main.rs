@@ -7,83 +7,10 @@ use arrow::record_batch::RecordBatch;
 use datatypes::SchemaRef;
 use log::info;
 use parquet::arrow::ArrowWriter;
-use parquet_common::contact::PhoneType;
+use parquet_common::prelude::*;
 use std::error::Error;
 use std::fs::File;
 use std::sync::Arc;
-
-#[derive(Debug, Clone, PartialEq, Default)]
-struct Phone {
-    number: Option<String>,
-    phone_type: Option<PhoneType>,
-}
-
-#[derive(Default)]
-struct PhoneBuilder {
-    number: Option<String>,
-    phone_type: Option<PhoneType>,
-}
-
-impl PhoneBuilder {
-    fn with_number(mut self, number: impl Into<String>) -> Self {
-        self.number = Some(number.into());
-        self
-    }
-
-    fn with_phone_type(mut self, phone_type: PhoneType) -> Self {
-        self.phone_type = Some(phone_type);
-        self
-    }
-
-    fn build(self) -> Phone {
-        Phone {
-            number: self.number,
-            phone_type: self.phone_type,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Default)]
-struct Contact {
-    name: Option<String>,
-    phones: Option<Vec<Phone>>,
-}
-
-impl Contact {
-    fn new(name: Option<String>, phones: Option<Vec<Phone>>) -> Contact {
-        Self { name, phones }
-    }
-}
-
-#[derive(Default)]
-struct ContactBuilder {
-    name: Option<String>,
-    phones: Option<Vec<Phone>>,
-}
-
-impl ContactBuilder {
-    fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.name = Some(name.into());
-        self
-    }
-
-    fn with_phone(mut self, phone: Phone) -> Self {
-        self.phones.get_or_insert_with(Vec::new).push(phone);
-        self
-    }
-
-    fn with_phones<I>(mut self, phones: I) -> Self
-    where
-        I: IntoIterator<Item = Phone>,
-    {
-        self.phones.get_or_insert_with(Vec::new).extend(phones);
-        self
-    }
-
-    fn build(self) -> Contact {
-        Contact::new(self.name, self.phones)
-    }
-}
 
 fn create_data() -> Vec<Contact> {
     vec![
@@ -170,9 +97,9 @@ fn create_record_batch(
     let mut phones_list_builder = ListBuilder::new(phone_struct_builder);
 
     for contact in contacts {
-        name_builder.append_option(contact.name.as_deref());
+        name_builder.append_option(contact.name());
 
-        if let Some(phones) = &contact.phones {
+        if let Some(phones) = contact.phones() {
             let struct_builder = phones_list_builder.values();
 
             for phone in phones {
@@ -183,11 +110,11 @@ fn create_record_batch(
                 struct_builder
                     .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
                     .unwrap()
-                    .append_option(phone.number.as_deref());
+                    .append_option(phone.number());
                 struct_builder
                     .field_builder::<StringBuilder>(PHONE_TYPE_FIELD_INDEX)
                     .unwrap()
-                    .append_option(phone.phone_type.as_ref().map(|x| x.as_str()));
+                    .append_option(phone.phone_type().map(AsRef::as_ref));
             }
 
             phones_list_builder.append(true);
