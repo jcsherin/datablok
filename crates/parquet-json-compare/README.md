@@ -52,6 +52,13 @@ most of the occurrences.
 | `phones.phone_type`   | 55% Mobile <br/> 35% Work <br/> 10% Home                               | Skewed distribution is more realistic than a uniform one. |
 | `phones.phone_number` | 40% zero phones <br/> 45% 1 phone <br/> 10% 2 phone <br/> 5% 3+ phones | Skewed towards most records having only 1 phone or none.  | 
 
+| `phone_number` | `phone_type` | Probability |
+|----------------|--------------|-------------|
+| Some(_)        | Some(_)      | 90%         |
+| Some(_)        | None         | 5%          |
+| None           | Some(_)      | 4%          |
+| None           | None         | 1%          |
+
 ### Cardinality
 
 | Field                 | Cardinality | Description                                                     |
