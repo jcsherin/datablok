@@ -96,10 +96,7 @@ fn main() {
 
     let elapsed_generation_time = start_generation_time.elapsed();
 
-    info!(
-        "Generation time (parallel) is: {:?}",
-        elapsed_generation_time
-    );
+    info!("Generation time (parallel) is: {elapsed_generation_time:?}");
 
     info!("Mobile count: {mobile_count}");
     info!("Work count: {work_count}");
