@@ -126,7 +126,14 @@ fn generate_contacts_chunk(size: usize, seed: u64) -> Vec<PartialContact> {
         .current()
 }
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOCATOR: dhat::Alloc = dhat::Alloc;
+
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
     env_logger::builder().filter_level(LevelFilter::Info).init();
 
     let target_contacts: usize = 10_000_000;

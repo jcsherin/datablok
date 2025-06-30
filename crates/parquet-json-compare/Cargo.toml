@@ -13,6 +13,10 @@ proptest = { version = "1.7.0", default-features = false, features = ["std"] }
 rayon = { version = "1.10.0", default-features = false }
 arrow = { version = "55.0.0", default-features = false, features = ["prettyprint"] }
 parquet = { version = "55.0.0", default-features = false, features = ["arrow"] }
+dhat = { version = "0.3.3", optional = true }
 
 [profile.release]
 debug = true
+
+[features]
+dhat-heap = ["dep:dhat"]
