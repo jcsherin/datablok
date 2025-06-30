@@ -101,3 +101,23 @@ __Resulting JSON__:
   "phones": null
 }
 ```
+
+### Design Notes
+
+* The data generation for `Contact` struct uses a preset distribution defined for each of its fields.
+    * Use `proptest` as the abstract shaper which knows the probability distribution of each `Contact` field defined
+      as a `BoxedStrategy`.
+    * The abstract (template-like) shape makes it possible to configure `Contact.name` to have realistic looking
+      values by using the `fake` package, instead of generating random string values.
+    * Each `Contact.phone_number` value is globally unique. This is implemented using a global
+      `std::sync::atomic::AtomicUsize` counter which is sequentially incremented. This was chosen to balance between
+      realistic enough numbers and not having to coordinate using an external data structure like a HashMap or bloom
+      filters.
+* Single-threaded execution on a single core is easy to write and requires less code. But it immediately runs into
+  bottleneck if we need to generate >1M nested data structure values.
+* Embarrassingly parallel data generation using `rayon` parallel iterator.
+    * A single dedicated parquet writer (consumer) thread which reads `RecordBatch` from channel and write to file
+      storage.
+    * Many producers with a pipeline like: `PartialContact` _chunk_ -> `Contact` _chunk_ -> `RecordBatch`.
+* Performance:
+    * Changing `BASE_CHUNK_SIZE` from 8192 -> 256 makes the execution ~2x faster.
