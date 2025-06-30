@@ -1,3 +1,5 @@
+pub mod arrow;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PhoneType {
     Mobile,
