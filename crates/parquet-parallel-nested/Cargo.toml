@@ -15,8 +15,5 @@ arrow = { version = "55.0.0", default-features = false, features = ["prettyprint
 parquet = { version = "55.0.0", default-features = false, features = ["arrow"] }
 dhat = { version = "0.3.3", optional = true }
 
-[profile.release]
-debug = true
-
 [features]
 dhat-heap = ["dep:dhat"]
