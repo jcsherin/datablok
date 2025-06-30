@@ -137,7 +137,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     env_logger::builder().filter_level(LevelFilter::Info).init();
 
     let target_contacts: usize = 10_000_000;
-    const BASE_CHUNK_SIZE: usize = 8192;
+    const BASE_CHUNK_SIZE: usize = 1024;
     let num_threads = rayon::current_num_threads();
 
     let mut human_formatter = Formatter::new();
