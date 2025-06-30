@@ -1,17 +1,18 @@
-A direct comparison between JSON and Parquet file sizes for storing nested data structures.
+High-performance parallel data generation with custom data skew from a concrete Rust nested data structures and
+finally written to a Parquet file. The generated `contacts.parquet` file is ~300MB.
 
 ### How to Run
 
 From the root of the monorepo, you can run this experiment using the package name:
 
 ```zsh
-RUST_LOG=info cargo run -p parquet-json-compare
+RUST_LOG=info cargo run -p parquet-parallel-nested
 ```
 
 To check the code formatting, linting, and other issues, you can use the verification script:
 
 ```zsh
-./scripts/verify.sh parquet-json-compare
+./scripts/verify.sh parquet-parallel-nested
 ```
 
 ### Expected Output
@@ -121,3 +122,11 @@ __Resulting JSON__:
     * Many producers with a pipeline like: `PartialContact` _chunk_ -> `Contact` _chunk_ -> `RecordBatch`.
 * Performance:
     * Changing `BASE_CHUNK_SIZE` from 8192 -> 256 makes the execution ~2x faster.
+* Decisions:
+    * Single-threaded vec materialization works upto 100K values. The next step is to generate small chunks and
+      immediately write to disk to avoid OOM crashes.
+    * There is a seam which separates the abstract shaping from the concrete (assembly) materialization of the value.
+        * The `Contacts.phones.phone_number` is globally unique. The abstract shape contains the cardinality
+          distribution of `Contact.phones` field, but the actual number which is used is only known at runtime tracked
+          by a global `AtomicUsize` counter which is incremented by 1. Requires no coordination or locking.
+    * Switching to `tikv-jemallocator` had a negative impact of performance.

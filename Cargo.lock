@@ -2300,7 +2300,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "parquet-json-compare"
+name = "parquet-nested-data"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "env_logger",
+ "log",
+ "parquet",
+ "parquet-common",
+]
+
+[[package]]
+name = "parquet-parallel-nested"
 version = "0.1.0"
 dependencies = [
  "arrow",
@@ -2313,17 +2324,6 @@ dependencies = [
  "parquet-common",
  "proptest",
  "rayon",
-]
-
-[[package]]
-name = "parquet-nested-data"
-version = "0.1.0"
-dependencies = [
- "arrow",
- "env_logger",
- "log",
- "parquet",
- "parquet-common",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [package]
-name = "parquet-json-compare"
+name = "parquet-parallel-nested"
 version = "0.1.0"
 edition = "2024"
 
