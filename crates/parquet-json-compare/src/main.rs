@@ -2,7 +2,7 @@ use fake::Fake;
 use fake::faker::name::en::{FirstName, LastName};
 use human_format::Formatter;
 use log::{LevelFilter, info};
-use parquet_common::prelude::{Contact, ContactBuilder, PhoneBuilder, PhoneType};
+use parquet_common::prelude::{ContactBuilder, PhoneBuilder, PhoneType};
 use proptest::prelude::{BoxedStrategy, Just, Strategy};
 use proptest::prop_oneof;
 use proptest::strategy::ValueTree;
@@ -125,6 +125,9 @@ fn main() {
     let num_threads = rayon::current_num_threads();
     let base_chunk_size = target_contacts.div_ceil(num_threads);
 
+    const SAMPLE_SIZE: usize = 100;
+    let samples_per_thread = (SAMPLE_SIZE as f64 / num_threads as f64).ceil() as usize;
+
     let mut human_formatter = Formatter::new();
     human_formatter.with_decimals(0).with_separator("");
 
@@ -136,62 +139,73 @@ fn main() {
 
     // Constraint: phone numbers are unique globally
     let phone_id_counter = AtomicUsize::new(0);
-
-    // Begin parallel data generation
     let start_generation_time = Instant::now();
 
-    let contacts: Vec<Contact> = (0..num_threads)
+    let (total_count, mut final_samples) = (0..num_threads)
         .into_par_iter()
-        .flat_map(|i| {
-            let start_index = i * base_chunk_size;
-            let current_chunk_size =
-                target_contacts.min(start_index + base_chunk_size) - start_index;
+        .fold(
+            || (0, Vec::with_capacity(samples_per_thread)),
+            |(mut count, mut samples), i| {
+                let start_index = i * base_chunk_size;
+                let chunk_size = target_contacts.min(start_index + base_chunk_size) - start_index;
 
-            if current_chunk_size == 0 {
-                return Vec::new();
-            }
+                if chunk_size == 0 {
+                    return (count, samples);
+                }
 
-            generate_contacts_chunk(current_chunk_size, i as u64)
-                .into_iter()
-                .map(|partial_contact| {
-                    let PartialContact(name, partial_phones) = partial_contact;
+                let contacts = generate_contacts_chunk(chunk_size, i as u64);
 
-                    let phones = partial_phones.into_iter().map(|partial_phone| {
+                for contact in contacts {
+                    let PartialContact(name, phones) = contact;
+
+                    let phones_iter = phones.into_iter().map(|partial_phone| {
                         let PartialPhone(phone_type, has_phone_number) = partial_phone;
 
                         let mut builder = PhoneBuilder::default();
                         if has_phone_number {
-                            let unique_id = phone_id_counter.fetch_add(1, Ordering::Relaxed);
-                            builder = builder.with_number(format!("+91-99-{unique_id:08}"));
+                            let id = phone_id_counter.fetch_add(1, Ordering::Relaxed);
+                            builder = builder.with_number(format!("+91-99-{id:08}"));
                         }
                         if let Some(value) = phone_type {
                             builder = builder.with_phone_type(value);
                         }
-
                         builder.build()
                     });
 
                     let mut builder = ContactBuilder::default();
-
-                    if let Some(value) = name {
-                        builder = builder.with_name(value);
+                    if let Some(name) = name {
+                        builder = builder.with_name(name);
                     }
-                    builder.with_phones(phones).build()
-                })
-                .collect::<Vec<Contact>>()
-        })
-        .collect();
+                    let contact = builder.with_phones(phones_iter).build();
+
+                    if samples.len() < samples_per_thread {
+                        samples.push(contact);
+                    }
+                    count += 1;
+                }
+                (count, samples)
+            },
+        )
+        .reduce(
+            || (0, Vec::new()),
+            |(count1, mut samples1), (count2, samples2)| {
+                samples1.extend(samples2);
+                (count1 + count2, samples1)
+            },
+        );
+
+    final_samples.truncate(SAMPLE_SIZE);
 
     let elapsed_generation_time = start_generation_time.elapsed();
 
     info!("Generation time (parallel) is: {elapsed_generation_time:?}");
     info!(
         "Generated a total of {} contacts",
-        human_formatter.format(contacts.len() as f64)
+        human_formatter.format(total_count as f64)
     );
 
-    info!("--- First 10 Generated Contacts ---");
-    for (i, contact) in contacts.iter().take(10).enumerate() {
-        info!("Contact {}: {:?}", i + 1, contact);
+    info!("--- First {} Generated Contacts ---", final_samples.len());
+    for (i, contact) in final_samples.iter().enumerate() {
+        info!("Contact {}: {contact:?}", i + 1);
     }
 }
