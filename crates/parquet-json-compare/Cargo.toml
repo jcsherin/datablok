@@ -13,3 +13,6 @@ proptest = { version = "1.7.0", default-features = false, features = ["std"] }
 rayon = { version = "1.10.0", default-features = false }
 arrow = { version = "55.0.0", default-features = false, features = ["prettyprint"] }
 parquet = { version = "55.0.0", default-features = false, features = ["arrow"] }
+
+[profile.release]
+debug = true
