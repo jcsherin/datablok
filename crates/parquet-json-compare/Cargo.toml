@@ -11,3 +11,5 @@ log = "0.4.27"
 parquet-common = { version = "0.1.0", path = "../parquet-common" }
 proptest = { version = "1.7.0", default-features = false, features = ["std"] }
 rayon = { version = "1.10.0", default-features = false }
+arrow = { version = "55.0.0", default-features = false, features = ["prettyprint"] }
+parquet = { version = "55.0.0", default-features = false, features = ["arrow"] }

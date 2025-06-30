@@ -1,14 +1,22 @@
+use arrow::record_batch::RecordBatch;
 use fake::Fake;
 use fake::faker::name::en::{FirstName, LastName};
 use human_format::Formatter;
 use log::{LevelFilter, info};
-use parquet_common::prelude::{ContactBuilder, PhoneBuilder, PhoneType};
+use parquet::arrow::ArrowWriter;
+use parquet_common::prelude::{
+    Contact, ContactBuilder, PhoneBuilder, PhoneType, create_record_batch, get_contact_schema,
+};
 use proptest::prelude::{BoxedStrategy, Just, Strategy};
 use proptest::prop_oneof;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::{Config, RngSeed, TestRunner};
 use rayon::prelude::*;
+use std::error::Error;
+use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread;
 use std::time::Instant;
 
 // A Zipfian-like categorical distribution for `phone_type`
@@ -118,94 +126,102 @@ fn generate_contacts_chunk(size: usize, seed: u64) -> Vec<PartialContact> {
         .current()
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     env_logger::builder().filter_level(LevelFilter::Info).init();
 
     let target_contacts: usize = 10_000_000;
+    const BASE_CHUNK_SIZE: usize = 8192;
     let num_threads = rayon::current_num_threads();
-    let base_chunk_size = target_contacts.div_ceil(num_threads);
-
-    const SAMPLE_SIZE: usize = 100;
-    let samples_per_thread = (SAMPLE_SIZE as f64 / num_threads as f64).ceil() as usize;
 
     let mut human_formatter = Formatter::new();
     human_formatter.with_decimals(0).with_separator("");
 
     info!(
-        "Generating {} contacts across {num_threads} threads. Chunk size: ~{}.",
+        "Generating {} contacts across {num_threads} threads. Chunk size: {}.",
         human_formatter.format(target_contacts as f64),
-        human_formatter.format(base_chunk_size as f64),
+        human_formatter.format(BASE_CHUNK_SIZE as f64),
     );
 
     // Constraint: phone numbers are unique globally
     let phone_id_counter = AtomicUsize::new(0);
-    let start_generation_time = Instant::now();
+    let start_time = Instant::now();
 
-    let (total_count, mut final_samples) = (0..num_threads)
+    let (tx, rx) = mpsc::sync_channel::<RecordBatch>(num_threads * 2);
+
+    let writer_handle = thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
+        let parquet_schema = get_contact_schema();
+        let parquet_file = File::create("contacts.parquet")?;
+        let mut parquet_writer = ArrowWriter::try_new(parquet_file, parquet_schema.clone(), None)?;
+
+        let mut count = 0;
+
+        for record_batch in rx {
+            parquet_writer.write(&record_batch)?;
+            count += record_batch.num_rows();
+        }
+
+        parquet_writer.close()?;
+        info!(
+            "Finished writing parquet file. Wrote {} contacts.",
+            human_formatter.format(count as f64)
+        );
+
+        Ok(())
+    });
+
+    let chunk_count = target_contacts.div_ceil(BASE_CHUNK_SIZE);
+    let parquet_schema = get_contact_schema();
+
+    (0..chunk_count)
         .into_par_iter()
-        .fold(
-            || (0, Vec::with_capacity(samples_per_thread)),
-            |(mut count, mut samples), i| {
-                let start_index = i * base_chunk_size;
-                let chunk_size = target_contacts.min(start_index + base_chunk_size) - start_index;
+        .for_each_with(tx, |tx, chunk_index| {
+            let start_index = chunk_index * BASE_CHUNK_SIZE;
+            let current_chunk_size = std::cmp::min(BASE_CHUNK_SIZE, target_contacts - start_index);
 
-                if chunk_size == 0 {
-                    return (count, samples);
-                }
+            if current_chunk_size == 0 {
+                return;
+            }
 
-                let contacts = generate_contacts_chunk(chunk_size, i as u64);
+            let seed = chunk_index as u64;
+            let partial_contacts = generate_contacts_chunk(current_chunk_size, seed);
 
-                for contact in contacts {
-                    let PartialContact(name, phones) = contact;
-
-                    let phones_iter = phones.into_iter().map(|partial_phone| {
-                        let PartialPhone(phone_type, has_phone_number) = partial_phone;
-
+            // Assemble the Vec<Contact> for this small chunk
+            let contacts_chunk: Vec<Contact> = partial_contacts
+                .into_iter()
+                .map(|partial_contact| {
+                    let PartialContact(name, partial_phones) = partial_contact;
+                    let phones_iter = partial_phones.into_iter().map(|partial_phone| {
+                        let PartialPhone(phone_type, has_number) = partial_phone;
                         let mut builder = PhoneBuilder::default();
-                        if has_phone_number {
+                        if has_number {
                             let id = phone_id_counter.fetch_add(1, Ordering::Relaxed);
                             builder = builder.with_number(format!("+91-99-{id:08}"));
                         }
-                        if let Some(value) = phone_type {
-                            builder = builder.with_phone_type(value);
+                        if let Some(pt) = phone_type {
+                            builder = builder.with_phone_type(pt);
                         }
                         builder.build()
                     });
-
                     let mut builder = ContactBuilder::default();
                     if let Some(name) = name {
                         builder = builder.with_name(name);
                     }
-                    let contact = builder.with_phones(phones_iter).build();
+                    builder.with_phones(phones_iter).build()
+                })
+                .collect();
 
-                    if samples.len() < samples_per_thread {
-                        samples.push(contact);
-                    }
-                    count += 1;
-                }
-                (count, samples)
-            },
-        )
-        .reduce(
-            || (0, Vec::new()),
-            |(count1, mut samples1), (count2, samples2)| {
-                samples1.extend(samples2);
-                (count1 + count2, samples1)
-            },
-        );
+            // Convert the chunk to a RecordBatch and send it to the writer
+            let record_batch = create_record_batch(parquet_schema.clone(), &contacts_chunk)
+                .expect("Failed to create RecordBatch");
+            tx.send(record_batch).unwrap();
+        });
 
-    final_samples.truncate(SAMPLE_SIZE);
-
-    let elapsed_generation_time = start_generation_time.elapsed();
-
-    info!("Generation time (parallel) is: {elapsed_generation_time:?}");
+    // Teardown
+    writer_handle.join().unwrap()?;
     info!(
-        "Generated a total of {} contacts",
-        human_formatter.format(total_count as f64)
+        "Total generation and write time: {:?}.",
+        start_time.elapsed()
     );
 
-    info!("--- First {} Generated Contacts ---", final_samples.len());
-    for (i, contact) in final_samples.iter().enumerate() {
-        info!("Contact {}: {contact:?}", i + 1);
-    }
+    Ok(())
 }

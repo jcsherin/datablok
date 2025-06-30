@@ -2281,10 +2281,12 @@ dependencies = [
 name = "parquet-json-compare"
 version = "0.1.0"
 dependencies = [
+ "arrow",
  "env_logger",
  "fake",
  "human_format",
  "log",
+ "parquet",
  "parquet-common",
  "proptest",
  "rayon",
