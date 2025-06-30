@@ -19,13 +19,6 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
 
-#[cfg(not(target_env = "msvc"))]
-use tikv_jemallocator::Jemalloc;
-
-#[cfg(not(target_env = "msvc"))]
-#[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
-
 // A Zipfian-like categorical distribution for `phone_type`
 //
 // | Phone Type | Probability |
