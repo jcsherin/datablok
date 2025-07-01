@@ -202,13 +202,15 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let target_contacts: usize = 10_000_000;
     const BASE_CHUNK_SIZE: usize = 256;
-    let num_threads = rayon::current_num_threads();
+    let num_cores = rayon::current_num_threads();
+    const NUM_WRITERS: usize = 2;
+    let num_producers = num_cores.saturating_sub(NUM_WRITERS);
 
     let mut human_formatter = Formatter::new();
     human_formatter.with_decimals(0).with_separator("");
 
     info!(
-        "Generating {} contacts across {num_threads} threads. Chunk size: {}.",
+        "Generating {} contacts across {num_cores} cores. Chunk size: {}.",
         human_formatter.format(target_contacts as f64),
         human_formatter.format(BASE_CHUNK_SIZE as f64),
     );
@@ -217,43 +219,59 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let phone_id_counter = AtomicUsize::new(0);
     let start_time = Instant::now();
 
-    let (tx1, rx1) = mpsc::sync_channel::<RecordBatch>(num_threads);
-    let (tx2, rx2) = mpsc::sync_channel::<RecordBatch>(num_threads);
+    let (tx1, rx1) = mpsc::sync_channel::<RecordBatch>(num_producers);
+    let (tx2, rx2) = mpsc::sync_channel::<RecordBatch>(num_producers);
+    let (tx3, rx3) = mpsc::sync_channel::<RecordBatch>(num_producers);
+    let (tx4, rx4) = mpsc::sync_channel::<RecordBatch>(num_producers);
 
     let writer_handle_1 = create_writer_thread("contacts_1.parquet", rx1);
     let writer_handle_2 = create_writer_thread("contacts_2.parquet", rx2);
+    let writer_handle_3 = create_writer_thread("contacts_3.parquet", rx3);
+    let writer_handle_4 = create_writer_thread("contacts_4.parquet", rx4);
 
-    let chunk_count = target_contacts.div_ceil(BASE_CHUNK_SIZE);
-    let parquet_schema = get_contact_schema();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_producers)
+        .build()
+        .unwrap();
 
-    (0..chunk_count)
-        .into_par_iter()
-        .for_each_with((tx1, tx2), |(tx1, tx2), chunk_index| {
-            let start_index = chunk_index * BASE_CHUNK_SIZE;
-            let current_chunk_size = std::cmp::min(BASE_CHUNK_SIZE, target_contacts - start_index);
+    pool.install(|| {
+        let chunk_count = target_contacts.div_ceil(BASE_CHUNK_SIZE);
+        let parquet_schema = get_contact_schema();
+        let senders = (tx1, tx2, tx3, tx4);
 
-            if current_chunk_size == 0 {
-                return;
-            }
+        (0..chunk_count)
+            .into_par_iter()
+            .for_each_with(senders, |(s1, s2, s3, s4), chunk_index| {
+                let start_index = chunk_index * BASE_CHUNK_SIZE;
+                let current_chunk_size =
+                    std::cmp::min(BASE_CHUNK_SIZE, target_contacts - start_index);
 
-            let seed = chunk_index as u64;
+                if current_chunk_size == 0 {
+                    return;
+                }
 
-            let partial_contacts = generate_contacts_chunk(current_chunk_size, seed);
+                let seed = chunk_index as u64;
 
-            let record_batch =
-                to_record_batch(parquet_schema.clone(), &phone_id_counter, partial_contacts)
-                    .expect("Failed to create RecordBatch");
+                let partial_contacts = generate_contacts_chunk(current_chunk_size, seed);
 
-            if chunk_index % 2 == 0 {
-                tx1.send(record_batch).unwrap();
-            } else {
-                tx2.send(record_batch).unwrap();
-            }
-        });
+                let record_batch =
+                    to_record_batch(parquet_schema.clone(), &phone_id_counter, partial_contacts)
+                        .expect("Failed to create RecordBatch");
+
+                match chunk_index % 4 {
+                    0 => s1.send(record_batch).expect("Failed to send to rx1"),
+                    1 => s2.send(record_batch).expect("Failed to send to rx2"),
+                    2 => s3.send(record_batch).expect("Failed to send to rx3"),
+                    _ => s4.send(record_batch).expect("Failed to send to rx4"),
+                }
+            });
+    });
 
     // Teardown
     writer_handle_1.join().unwrap()?;
     writer_handle_2.join().unwrap()?;
+    writer_handle_3.join().unwrap()?;
+    writer_handle_4.join().unwrap()?;
 
     info!(
         "Total generation and write time: {:?}.",
