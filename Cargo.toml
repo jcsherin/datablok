@@ -7,4 +7,6 @@ resolver = "2"
 [workspace.dependencies]
 
 [profile.release]
-debug = true
+debug = false
+lto = "fat"
+codegen-units = 1
