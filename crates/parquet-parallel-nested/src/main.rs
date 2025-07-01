@@ -1,12 +1,12 @@
+use arrow::array::{ListBuilder, StringBuilder, StringDictionaryBuilder, StructBuilder};
+use arrow::datatypes::{SchemaRef, UInt8Type};
 use arrow::record_batch::RecordBatch;
 use fake::Fake;
 use fake::faker::name::en::{FirstName, LastName};
 use human_format::Formatter;
 use log::{LevelFilter, info};
 use parquet::arrow::ArrowWriter;
-use parquet_common::prelude::{
-    Contact, ContactBuilder, PhoneBuilder, PhoneType, create_record_batch, get_contact_schema,
-};
+use parquet_common::prelude::*;
 use proptest::prelude::{BoxedStrategy, Just, Strategy};
 use proptest::prop_oneof;
 use proptest::strategy::ValueTree;
@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use std::error::Error;
 use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Instant;
 
@@ -126,6 +126,63 @@ fn generate_contacts_chunk(size: usize, seed: u64) -> Vec<PartialContact> {
         .current()
 }
 
+fn to_record_batch(
+    schema: SchemaRef,
+    phone_id_counter: &AtomicUsize,
+    chunk: Vec<PartialContact>,
+) -> Result<RecordBatch, Box<dyn Error>> {
+    let mut name_builder = StringBuilder::new();
+
+    let phone_number_builder = StringBuilder::new();
+    let phone_type_builder = StringDictionaryBuilder::<UInt8Type>::new();
+    let phone_struct_builder = StructBuilder::new(
+        get_contact_phone_fields(),
+        vec![Box::new(phone_number_builder), Box::new(phone_type_builder)],
+    );
+
+    let mut phones_list_builder = ListBuilder::new(phone_struct_builder);
+
+    for PartialContact(name, phones) in chunk {
+        name_builder.append_option(name);
+
+        if phones.is_empty() {
+            phones_list_builder.append_null();
+        } else {
+            let struct_builder = phones_list_builder.values();
+
+            for PartialPhone(phone_type, has_phone_number) in phones {
+                struct_builder.append(true);
+
+                if has_phone_number {
+                    let id = phone_id_counter.fetch_add(1, Ordering::Relaxed);
+                    let phone_number = Some(format!("+91-99-{id:08}"));
+                    struct_builder
+                        .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
+                        .unwrap()
+                        .append_option(phone_number);
+                } else {
+                    struct_builder
+                        .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
+                        .unwrap()
+                        .append_option(None::<String>);
+                }
+
+                struct_builder
+                    .field_builder::<StringDictionaryBuilder<UInt8Type>>(PHONE_TYPE_FIELD_INDEX)
+                    .unwrap()
+                    .append_option(phone_type);
+            }
+
+            phones_list_builder.append(true);
+        }
+    }
+
+    let name_array = Arc::new(name_builder.finish());
+    let phones_array = Arc::new(phones_list_builder.finish());
+
+    RecordBatch::try_new(schema, vec![name_array, phones_array]).map_err(Into::into)
+}
+
 #[cfg(feature = "dhat-heap")]
 #[global_allocator]
 static ALLOCATOR: dhat::Alloc = dhat::Alloc;
@@ -190,36 +247,13 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
 
             let seed = chunk_index as u64;
+
             let partial_contacts = generate_contacts_chunk(current_chunk_size, seed);
 
-            // Assemble the Vec<Contact> for this small chunk
-            let contacts_chunk: Vec<Contact> = partial_contacts
-                .into_iter()
-                .map(|partial_contact| {
-                    let PartialContact(name, partial_phones) = partial_contact;
-                    let phones_iter = partial_phones.into_iter().map(|partial_phone| {
-                        let PartialPhone(phone_type, has_number) = partial_phone;
-                        let mut builder = PhoneBuilder::default();
-                        if has_number {
-                            let id = phone_id_counter.fetch_add(1, Ordering::Relaxed);
-                            builder = builder.with_number(format!("+91-99-{id:08}"));
-                        }
-                        if let Some(pt) = phone_type {
-                            builder = builder.with_phone_type(pt);
-                        }
-                        builder.build()
-                    });
-                    let mut builder = ContactBuilder::default();
-                    if let Some(name) = name {
-                        builder = builder.with_name(name);
-                    }
-                    builder.with_phones(phones_iter).build()
-                })
-                .collect();
+            let record_batch =
+                to_record_batch(parquet_schema.clone(), &phone_id_counter, partial_contacts)
+                    .expect("Failed to create RecordBatch");
 
-            // Convert the chunk to a RecordBatch and send it to the writer
-            let record_batch = create_record_batch(parquet_schema.clone(), &contacts_chunk)
-                .expect("Failed to create RecordBatch");
             tx.send(record_batch).unwrap();
         });
 

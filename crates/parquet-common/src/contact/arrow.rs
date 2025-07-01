@@ -35,8 +35,8 @@ pub fn get_contact_schema() -> SchemaRef {
     Arc::new(Schema::new(build_contact_fields()))
 }
 
-const PHONE_NUMBER_FIELD_INDEX: usize = 0;
-const PHONE_TYPE_FIELD_INDEX: usize = 1;
+pub const PHONE_NUMBER_FIELD_INDEX: usize = 0;
+pub const PHONE_TYPE_FIELD_INDEX: usize = 1;
 
 pub fn create_record_batch(
     schema: SchemaRef,
