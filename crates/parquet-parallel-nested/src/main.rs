@@ -13,6 +13,7 @@ use proptest::strategy::ValueTree;
 use proptest::test_runner::{Config, RngSeed, TestRunner};
 use rayon::prelude::*;
 use std::error::Error;
+use std::fmt::Write;
 use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
@@ -142,6 +143,8 @@ fn to_record_batch(
 
     let mut phones_list_builder = ListBuilder::new(phone_struct_builder);
 
+    let mut phone_number_buf = String::with_capacity(16);
+
     for PartialContact(name, phones) in chunk {
         name_builder.append_option(name);
 
@@ -155,11 +158,13 @@ fn to_record_batch(
 
                 if has_phone_number {
                     let id = phone_id_counter.fetch_add(1, Ordering::Relaxed);
-                    let phone_number = Some(format!("+91-99-{id:08}"));
+                    write!(phone_number_buf, "+91-99-{id:08}")?;
                     struct_builder
                         .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
                         .unwrap()
-                        .append_option(phone_number);
+                        .append_value(&phone_number_buf);
+
+                    phone_number_buf.clear();
                 } else {
                     struct_builder
                         .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
