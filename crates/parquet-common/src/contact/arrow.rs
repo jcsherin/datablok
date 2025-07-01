@@ -1,13 +1,19 @@
 use super::Contact;
-use arrow::array::{ListBuilder, RecordBatch, StringBuilder, StructBuilder};
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::array::{
+    ListBuilder, RecordBatch, StringBuilder, StringDictionaryBuilder, StructBuilder,
+};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef, UInt8Type};
 use std::error::Error;
 use std::sync::Arc;
 
 pub fn get_contact_phone_fields() -> Vec<Arc<Field>> {
     vec![
         Arc::from(Field::new("number", DataType::Utf8, true)),
-        Arc::from(Field::new("phone_type", DataType::Utf8, true)),
+        Arc::from(Field::new(
+            "phone_type",
+            DataType::Dictionary(Box::new(DataType::UInt8), Box::new(DataType::Utf8)),
+            true,
+        )),
     ]
 }
 
@@ -39,7 +45,7 @@ pub fn create_record_batch(
     let mut name_builder = StringBuilder::new();
 
     let phone_number_builder = StringBuilder::new();
-    let phone_type_builder = StringBuilder::new();
+    let phone_type_builder = StringDictionaryBuilder::<UInt8Type>::new();
     let phone_struct_builder = StructBuilder::new(
         get_contact_phone_fields(),
         vec![Box::new(phone_number_builder), Box::new(phone_type_builder)],
@@ -63,7 +69,7 @@ pub fn create_record_batch(
                     .unwrap()
                     .append_option(phone.number());
                 struct_builder
-                    .field_builder::<StringBuilder>(PHONE_TYPE_FIELD_INDEX)
+                    .field_builder::<StringDictionaryBuilder<UInt8Type>>(PHONE_TYPE_FIELD_INDEX)
                     .unwrap()
                     .append_option(phone.phone_type().map(AsRef::as_ref));
             }
