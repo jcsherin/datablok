@@ -7,10 +7,8 @@ use human_format::Formatter;
 use log::{LevelFilter, info};
 use parquet::arrow::ArrowWriter;
 use parquet_common::prelude::*;
-use proptest::prelude::{BoxedStrategy, Just, Strategy};
-use proptest::prop_oneof;
-use proptest::strategy::ValueTree;
-use proptest::test_runner::{Config, RngSeed, TestRunner};
+use rand::prelude::StdRng;
+use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 use std::error::Error;
 use std::fmt::Write;
@@ -20,21 +18,72 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Instant;
 
-// A Zipfian-like categorical distribution for `phone_type`
-//
-// | Phone Type | Probability |
-// |------------|-------------|
-// | Mobile     | 0.55        |
-// | Work       | 0.35        |
-// | Home       | 0.10        |
-//
-fn phone_type_strategy() -> BoxedStrategy<PhoneType> {
-    prop_oneof![
-        55 => Just(PhoneType::Mobile),
-        35 => Just(PhoneType::Work),
-        10 => Just(PhoneType::Home),
-    ]
-    .boxed()
+fn generate_phone_type(rng: &mut impl Rng) -> PhoneType {
+    match rng.random_range(0..100) {
+        0..=54 => PhoneType::Mobile, // 0.55
+        55..=89 => PhoneType::Work,  // 0.35
+        _ => PhoneType::Home,        // 0.10
+    }
+}
+
+fn generate_partial_phone(rng: &mut impl Rng) -> PartialPhone {
+    match rng.random_range(0..100) {
+        0..=89 => PartialPhone(Some(generate_phone_type(rng)), true), // 0.90
+        90..=94 => PartialPhone(None, true),                          // 0.05
+        95..=98 => PartialPhone(Some(generate_phone_type(rng)), false), // 0.04
+        _ => PartialPhone(None, false),                               // 0.01
+    }
+}
+
+fn generate_phones(rng: &mut impl Rng) -> Vec<PartialPhone> {
+    let num_phones = match rng.random_range(0..100) {
+        0..=39 => 0,                  // 0.40
+        40..=84 => 1,                 // 0.45
+        85..=94 => 2,                 // 0.10
+        _ => rng.random_range(3..=5), // 0.05
+    };
+
+    (0..num_phones)
+        .map(|_| generate_partial_phone(rng))
+        .collect()
+}
+
+fn generate_name(rng: &mut impl Rng, name_buf: &mut String) -> Option<String> {
+    if rng.random_bool(0.8) {
+        write!(
+            name_buf,
+            "{} {}",
+            FirstName().fake::<&str>(),
+            LastName().fake::<&str>(),
+        )
+        .unwrap();
+
+        let name = Some(name_buf.clone());
+        name_buf.clear();
+
+        name
+    } else {
+        None
+    }
+}
+
+fn generate_partial_contact(rng: &mut impl Rng, name_buf: &mut String) -> PartialContact {
+    let name = generate_name(rng, name_buf);
+    let phones = generate_phones(rng);
+
+    PartialContact(name, phones)
+}
+
+fn generate_contacts_chunk(size: usize, seed: u64) -> Vec<PartialContact> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut contacts = Vec::with_capacity(size);
+    let mut name_buf = String::with_capacity(32);
+
+    for _ in 0..size {
+        contacts.push(generate_partial_contact(&mut rng, &mut name_buf));
+    }
+
+    contacts
 }
 
 /// An intermediate value Phone struct value.
@@ -50,86 +99,6 @@ struct PartialPhone(Option<PhoneType>, bool);
 
 #[derive(Debug, Clone)]
 struct PartialContact(Option<String>, Vec<PartialPhone>);
-
-// Categorical Distribution for properties of Phone struct
-//
-//
-// | `phone_number` | `phone_type` | Probability |
-// |----------------|--------------|-------------|
-// | Some(_)        | Some(_)      | 90%         |
-// | Some(_)        | None         | 5%          |
-// | None           | Some(_)      | 4%          |
-// | None           | None         | 1%          |
-//
-fn phone_struct_strategy() -> BoxedStrategy<PartialPhone> {
-    let strategy = prop_oneof![
-        90 => (phone_type_strategy().prop_map(Some), Just(true)),
-        5 => (Just(None), Just(true)),
-        4 => (phone_type_strategy().prop_map(Some), Just(false)),
-        1 => (Just(None), Just(false)),
-    ]
-    .boxed();
-
-    strategy
-        .prop_map(|(phone_type, has_phone_number)| PartialPhone(phone_type, has_phone_number))
-        .boxed()
-}
-
-// Cardinality of phones per contact
-//
-// | Cardinality | Probability |
-// |-------------|-------------|
-// |          0  |         40% |
-// |          1  |         45% |
-// |          2  |         10% |
-// |          3+ |          5% |
-//
-fn phones_strategy() -> BoxedStrategy<Vec<PartialPhone>> {
-    let strategy = phone_struct_strategy();
-    prop_oneof![
-        40 => Just(Vec::new()),
-        45 => proptest::collection::vec(strategy.clone(), 1),
-        10 => proptest::collection::vec(strategy.clone(), 2),
-        5 => proptest::collection::vec(strategy.clone(), 3..=5),
-    ]
-    .boxed()
-}
-
-// Uses fake to generate realistic names
-// | Name    | Probability |
-// |---------|-------------|
-// | Some(_) |         80% |
-// | None    |         20% |
-//
-fn name_strategy() -> BoxedStrategy<Option<String>> {
-    prop_oneof![
-        80 => Just(()).prop_map(|_| {
-            let mut name_buf = String::with_capacity(32);
-            write!(&mut name_buf, "{} {}", FirstName().fake::<&str>(), LastName().fake::<&str>()).unwrap();
-            Some(name_buf)
-         }),
-        20 => Just(None)
-    ].boxed()
-}
-
-fn contact_strategy() -> BoxedStrategy<PartialContact> {
-    (name_strategy(), phones_strategy())
-        .prop_map(|(name, phones)| PartialContact(name, phones))
-        .boxed()
-}
-
-fn generate_contacts_chunk(size: usize, seed: u64) -> Vec<PartialContact> {
-    let mut runner = TestRunner::new(Config {
-        rng_seed: RngSeed::Fixed(seed),
-        ..Config::default()
-    });
-
-    let strategy = proptest::collection::vec(contact_strategy(), size);
-    strategy
-        .new_tree(&mut runner)
-        .expect("Failed to generate chunk of partial contacts")
-        .current()
-}
 
 fn to_record_batch(
     schema: SchemaRef,
