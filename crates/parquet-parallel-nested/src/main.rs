@@ -192,6 +192,35 @@ fn to_record_batch(
     RecordBatch::try_new(schema, vec![name_array, phones_array]).map_err(Into::into)
 }
 
+fn create_writer_thread(
+    path: &'static str,
+    rx: mpsc::Receiver<RecordBatch>,
+) -> thread::JoinHandle<Result<(), Box<dyn Error + Send + Sync>>> {
+    thread::spawn(move || {
+        let parquet_schema = get_contact_schema();
+        let parquet_file = File::create(path)?;
+        let mut parquet_writer = ArrowWriter::try_new(parquet_file, parquet_schema.clone(), None)?;
+
+        let mut count = 0;
+
+        for record_batch in rx {
+            parquet_writer.write(&record_batch)?;
+            count += record_batch.num_rows();
+        }
+
+        parquet_writer.close()?;
+
+        let mut human_formatter = Formatter::new();
+        human_formatter.with_decimals(0).with_separator("");
+        info!(
+            "Finished writing parquet file. Wrote {} contacts.",
+            human_formatter.format(count as f64)
+        );
+
+        Ok(())
+    })
+}
+
 #[cfg(feature = "dhat-heap")]
 #[global_allocator]
 static ALLOCATOR: dhat::Alloc = dhat::Alloc;
@@ -219,35 +248,18 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let phone_id_counter = AtomicUsize::new(0);
     let start_time = Instant::now();
 
-    let (tx, rx) = mpsc::sync_channel::<RecordBatch>(num_threads * 2);
+    let (tx1, rx1) = mpsc::sync_channel::<RecordBatch>(num_threads);
+    let (tx2, rx2) = mpsc::sync_channel::<RecordBatch>(num_threads);
 
-    let writer_handle = thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
-        let parquet_schema = get_contact_schema();
-        let parquet_file = File::create("contacts.parquet")?;
-        let mut parquet_writer = ArrowWriter::try_new(parquet_file, parquet_schema.clone(), None)?;
-
-        let mut count = 0;
-
-        for record_batch in rx {
-            parquet_writer.write(&record_batch)?;
-            count += record_batch.num_rows();
-        }
-
-        parquet_writer.close()?;
-        info!(
-            "Finished writing parquet file. Wrote {} contacts.",
-            human_formatter.format(count as f64)
-        );
-
-        Ok(())
-    });
+    let writer_handle_1 = create_writer_thread("contacts_1.parquet", rx1);
+    let writer_handle_2 = create_writer_thread("contacts_2.parquet", rx2);
 
     let chunk_count = target_contacts.div_ceil(BASE_CHUNK_SIZE);
     let parquet_schema = get_contact_schema();
 
     (0..chunk_count)
         .into_par_iter()
-        .for_each_with(tx, |tx, chunk_index| {
+        .for_each_with((tx1, tx2), |(tx1, tx2), chunk_index| {
             let start_index = chunk_index * BASE_CHUNK_SIZE;
             let current_chunk_size = std::cmp::min(BASE_CHUNK_SIZE, target_contacts - start_index);
 
@@ -263,11 +275,17 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 to_record_batch(parquet_schema.clone(), &phone_id_counter, partial_contacts)
                     .expect("Failed to create RecordBatch");
 
-            tx.send(record_batch).unwrap();
+            if chunk_index % 2 == 0 {
+                tx1.send(record_batch).unwrap();
+            } else {
+                tx2.send(record_batch).unwrap();
+            }
         });
 
     // Teardown
-    writer_handle.join().unwrap()?;
+    writer_handle_1.join().unwrap()?;
+    writer_handle_2.join().unwrap()?;
+
     info!(
         "Total generation and write time: {:?}.",
         start_time.elapsed()
