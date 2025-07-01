@@ -164,15 +164,19 @@ fn to_record_batch(
 fn create_writer_thread(
     path: &'static str,
     rx: mpsc::Receiver<RecordBatch>,
-) -> thread::JoinHandle<Result<(), Box<dyn Error + Send + Sync>>> {
+) -> thread::JoinHandle<Result<usize, Box<dyn Error + Send + Sync>>> {
     thread::spawn(move || {
         let parquet_schema = get_contact_schema();
         let parquet_file = File::create(path)?;
         let mut parquet_writer = ArrowWriter::try_new(parquet_file, parquet_schema.clone(), None)?;
 
         let mut count = 0;
+        let mut total_bytes = 0;
 
         for record_batch in rx {
+            // Track the in-memory size of the batch
+            total_bytes += record_batch.get_array_memory_size();
+
             parquet_writer.write(&record_batch)?;
             count += record_batch.num_rows();
         }
@@ -186,7 +190,7 @@ fn create_writer_thread(
             human_formatter.format(count as f64)
         );
 
-        Ok(())
+        Ok(total_bytes)
     })
 }
 
@@ -268,15 +272,25 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     });
 
     // Teardown
-    writer_handle_1.join().unwrap()?;
-    writer_handle_2.join().unwrap()?;
-    writer_handle_3.join().unwrap()?;
-    writer_handle_4.join().unwrap()?;
+    let bytes1 = writer_handle_1.join().unwrap()?;
+    let bytes2 = writer_handle_2.join().unwrap()?;
+    let bytes3 = writer_handle_3.join().unwrap()?;
+    let bytes4 = writer_handle_4.join().unwrap()?;
+    let total_in_memory_bytes = bytes1 + bytes2 + bytes3 + bytes4;
+
+    let elapsed = start_time.elapsed();
+    info!("Total generation and write time: {elapsed:?}.");
+
+    // Throughput
+    let elapsed_secs = elapsed.as_secs_f64();
+    let records_per_sec = (target_contacts as f64) / elapsed_secs;
+    let gb_per_sec = (total_in_memory_bytes as f64 / 1_000_000_000.0) / elapsed_secs;
 
     info!(
-        "Total generation and write time: {:?}.",
-        start_time.elapsed()
+        "Record Throughput: {} records/sec",
+        human_formatter.format(records_per_sec)
     );
+    info!("In-Memory Throughput: {gb_per_sec:.2} GB/s");
 
     Ok(())
 }
