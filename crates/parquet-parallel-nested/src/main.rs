@@ -103,7 +103,11 @@ fn phones_strategy() -> BoxedStrategy<Vec<PartialPhone>> {
 //
 fn name_strategy() -> BoxedStrategy<Option<String>> {
     prop_oneof![
-        80 => Just(()).prop_map(|_| Some(format!("{} {}", FirstName().fake::<String>(), LastName().fake::<String>()))),
+        80 => Just(()).prop_map(|_| {
+            let mut name_buf = String::with_capacity(32);
+            write!(&mut name_buf, "{} {}", FirstName().fake::<&str>(), LastName().fake::<&str>()).unwrap();
+            Some(name_buf)
+         }),
         20 => Just(None)
     ].boxed()
 }
