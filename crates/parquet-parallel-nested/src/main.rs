@@ -225,13 +225,13 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let (tx1, rx1) = mpsc::sync_channel::<RecordBatch>(num_producers);
     let (tx2, rx2) = mpsc::sync_channel::<RecordBatch>(num_producers);
-    // let (tx3, rx3) = mpsc::sync_channel::<RecordBatch>(num_producers);
-    // let (tx4, rx4) = mpsc::sync_channel::<RecordBatch>(num_producers);
+    let (tx3, rx3) = mpsc::sync_channel::<RecordBatch>(num_producers);
+    let (tx4, rx4) = mpsc::sync_channel::<RecordBatch>(num_producers);
 
     let writer_handle_1 = create_writer_thread("contacts_1.parquet", rx1);
     let writer_handle_2 = create_writer_thread("contacts_2.parquet", rx2);
-    // let writer_handle_3 = create_writer_thread("contacts_3.parquet", rx3);
-    // let writer_handle_4 = create_writer_thread("contacts_4.parquet", rx4);
+    let writer_handle_3 = create_writer_thread("contacts_3.parquet", rx3);
+    let writer_handle_4 = create_writer_thread("contacts_4.parquet", rx4);
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_producers)
@@ -241,13 +241,11 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     pool.install(|| {
         let chunk_count = target_contacts.div_ceil(BASE_CHUNK_SIZE);
         let parquet_schema = get_contact_schema();
-        // let senders = (tx1, tx2, tx3, tx4);
-        let senders = (tx1, tx2);
+        let senders = (tx1, tx2, tx3, tx4);
 
         (0..chunk_count)
             .into_par_iter()
-            // .for_each_with(senders, |(s1, s2, s3, s4), chunk_index| {
-            .for_each_with(senders, |(s1, s2), chunk_index| {
+            .for_each_with(senders, |(s1, s2, s3, s4), chunk_index| {
                 let start_index = chunk_index * BASE_CHUNK_SIZE;
                 let current_chunk_size =
                     std::cmp::min(BASE_CHUNK_SIZE, target_contacts - start_index);
@@ -264,11 +262,11 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     to_record_batch(parquet_schema.clone(), &phone_id_counter, partial_contacts)
                         .expect("Failed to create RecordBatch");
 
-                match chunk_index % 2 {
+                match chunk_index % 4 {
                     0 => s1.send(record_batch).expect("Failed to send to rx1"),
-                    _ => s2.send(record_batch).expect("Failed to send to rx2"),
-                    // 2 => s3.send(record_batch).expect("Failed to send to rx3"),
-                    // _ => s4.send(record_batch).expect("Failed to send to rx4"),
+                    1 => s2.send(record_batch).expect("Failed to send to rx2"),
+                    2 => s3.send(record_batch).expect("Failed to send to rx3"),
+                    _ => s4.send(record_batch).expect("Failed to send to rx4"),
                 }
             });
     });
@@ -276,10 +274,9 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Teardown
     let bytes1 = writer_handle_1.join().unwrap()?;
     let bytes2 = writer_handle_2.join().unwrap()?;
-    // let bytes3 = writer_handle_3.join().unwrap()?;
-    // let bytes4 = writer_handle_4.join().unwrap()?;
-    // let total_in_memory_bytes = bytes1 + bytes2 + bytes3 + bytes4;
-    let total_in_memory_bytes = bytes1 + bytes2;
+    let bytes3 = writer_handle_3.join().unwrap()?;
+    let bytes4 = writer_handle_4.join().unwrap()?;
+    let total_in_memory_bytes = bytes1 + bytes2 + bytes3 + bytes4;
 
     let elapsed = start_time.elapsed();
     info!("Total generation and write time: {elapsed:?}.");
