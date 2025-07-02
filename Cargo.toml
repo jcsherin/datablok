@@ -7,6 +7,5 @@ resolver = "2"
 [workspace.dependencies]
 
 [profile.release]
-debug = false
-lto = "fat"
-codegen-units = 1
+debug = true
+strip = false # Retain debug info for flamegraphs
