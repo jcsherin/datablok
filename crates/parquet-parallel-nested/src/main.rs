@@ -1,6 +1,5 @@
 use arrow::array::{ListBuilder, StringBuilder, StringDictionaryBuilder, StructBuilder};
 use arrow::datatypes::{SchemaRef, UInt8Type};
-use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use fake::Fake;
 use fake::faker::name::en::{FirstName, LastName};
@@ -12,7 +11,7 @@ use rand::prelude::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 use std::error::Error;
-use std::fmt::{Debug, Display, Write};
+use std::fmt::{Debug, Write};
 use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
@@ -27,26 +26,22 @@ fn generate_phone_type(rng: &mut impl Rng) -> PhoneType {
     }
 }
 
-fn generate_partial_phone(rng: &mut impl Rng) -> PartialPhone {
+fn get_num_phones(rng: &mut impl Rng) -> i32 {
     match rng.random_range(0..100) {
-        0..=89 => PartialPhone(Some(generate_phone_type(rng)), true), // 0.90
-        90..=94 => PartialPhone(None, true),                          // 0.05
-        95..=98 => PartialPhone(Some(generate_phone_type(rng)), false), // 0.04
-        _ => PartialPhone(None, false),                               // 0.01
-    }
-}
-
-fn generate_phones(rng: &mut impl Rng) -> Vec<PartialPhone> {
-    let num_phones = match rng.random_range(0..100) {
         0..=39 => 0,                  // 0.40
         40..=84 => 1,                 // 0.45
         85..=94 => 2,                 // 0.10
         _ => rng.random_range(3..=5), // 0.05
-    };
+    }
+}
 
-    (0..num_phones)
-        .map(|_| generate_partial_phone(rng))
-        .collect()
+fn get_phone_template(rng: &mut impl Rng) -> (bool, Option<PhoneType>) {
+    match rng.random_range(0..100) {
+        0..=89 => (true, Some(generate_phone_type(rng))), // 90%
+        90..=94 => (true, None),                          //  5%
+        95..=98 => (false, Some(generate_phone_type(rng))), //  4%
+        _ => (false, None),                               //  1%
+    }
 }
 
 fn generate_name(rng: &mut impl Rng, name_buf: &mut String) -> Option<String> {
@@ -68,127 +63,47 @@ fn generate_name(rng: &mut impl Rng, name_buf: &mut String) -> Option<String> {
     }
 }
 
-fn generate_partial_contact(rng: &mut impl Rng, name_buf: &mut String) -> PartialContact {
-    let name = generate_name(rng, name_buf);
-    let phones = generate_phones(rng);
-
-    PartialContact(name, phones)
-}
-
-fn generate_contacts_chunk(size: usize, seed: u64) -> Vec<PartialContact> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    let mut contacts = Vec::with_capacity(size);
-    let mut name_buf = String::with_capacity(32);
-
-    for _ in 0..size {
-        contacts.push(generate_partial_contact(&mut rng, &mut name_buf));
-    }
-
-    contacts
-}
-
-/// An intermediate value Phone struct value.
-///
-/// The first argument is the optional `phone_type`.
-/// The second argument indicates if `phone_number` is present.
-///
-/// The `phone_number` is unique globally across the generated dataset. During dataset generation
-/// if the second argument is `true` then a unique `phone_number` is slotted in, otherwise if it
-/// is `false`, then the `phone_number` is not present in the `Phone` struct.
-#[derive(Debug, Clone)]
-struct PartialPhone(Option<PhoneType>, bool);
-
-#[derive(Debug, Clone)]
-struct PartialContact(Option<String>, Vec<PartialPhone>);
-
 #[derive(Debug)]
-struct GeneratorState {
+struct RecordBatchGenerator {
     schema: SchemaRef,
-    name: StringBuilder,
-    phone_number_buf: String,
     counter: Arc<AtomicUsize>,
-    phones: ListBuilder<StructBuilder>,
-    current_chunks: usize,
 }
 
-enum GeneratorStateError {
-    NotEnoughChunks { current: usize, required: usize },
-    TryFlushZeroChunks,
-}
-
-impl Debug for GeneratorStateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GeneratorStateError::NotEnoughChunks { current, required } => f
-                .debug_struct("NotEnoughChunks")
-                .field("current", current)
-                .field("required", required)
-                .finish(),
-            GeneratorStateError::TryFlushZeroChunks => {
-                f.debug_struct("TryFlushZeroChunks").finish()
-            }
-        }
-    }
-}
-
-impl Display for GeneratorStateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GeneratorStateError::NotEnoughChunks { current, required } => {
-                write!(
-                    f,
-                    "Not enough chunks to build a RecordBatch. Current:{current}. Required: {required}.",
-                )
-            }
-            GeneratorStateError::TryFlushZeroChunks => {
-                write!(f, "Flush attempted but no chunks were present.")
-            }
-        }
-    }
-}
-
-impl Error for GeneratorStateError {}
-
-impl GeneratorState {
+impl RecordBatchGenerator {
     const PHONE_NUMBER_LENGTH: usize = 16;
-    const CHUNK_MULTIPLIER: usize = 16;
 
     fn new(schema: SchemaRef, counter: Arc<AtomicUsize>) -> Self {
-        let name = StringBuilder::new();
+        RecordBatchGenerator { schema, counter }
+    }
+
+    fn get(&mut self, seed: u64, count: usize) -> Result<RecordBatch, Box<dyn Error>> {
+        let mut name = StringBuilder::new();
         let phone_type = StringDictionaryBuilder::<UInt8Type>::new();
         let phone_number = StringBuilder::new();
-        let phone_number_buf = String::with_capacity(Self::PHONE_NUMBER_LENGTH);
+        let mut phone_number_buf = String::with_capacity(Self::PHONE_NUMBER_LENGTH);
         let phone = StructBuilder::new(
             get_contact_phone_fields(),
             vec![Box::new(phone_number), Box::new(phone_type)],
         );
-        let phones = ListBuilder::new(phone);
+        let mut phones = ListBuilder::new(phone);
 
-        GeneratorState {
-            schema,
-            name,
-            phone_number_buf,
-            counter,
-            phones,
-            current_chunks: 0,
-        }
-    }
+        let rng = &mut StdRng::seed_from_u64(seed);
+        let mut name_buf = String::with_capacity(32);
 
-    fn append(&mut self, chunk: Vec<PartialContact>) -> Result<(), Box<dyn Error>> {
-        for PartialContact(name, phones) in chunk {
-            self.name.append_option(name);
+        for _ in 0..count {
+            name.append_option(generate_name(rng, &mut name_buf));
 
-            if phones.is_empty() {
-                // Handles zero phones in contact
-                self.phones.append_null();
+            let phones_count = get_num_phones(rng);
+            if phones_count == 0 {
+                phones.append_null();
             } else {
-                // Handles at least one ore more phones
-                let builder = self.phones.values();
+                let builder = phones.values();
 
-                for PartialPhone(phone_type, has_number) in phones {
+                for _ in 0..phones_count {
                     builder.append(true);
 
-                    // Field: `Phone.number`
+                    let (has_number, phone_type) = get_phone_template(rng);
+
                     let phone_number_builder = builder
                         .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
                         .ok_or_else(|| {
@@ -196,73 +111,33 @@ impl GeneratorState {
                                 "Expected `number` field at idx: 0 of `Phone` struct builder.",
                             )
                         })?;
+
                     if has_number {
                         let uniq_suffix = self.counter.fetch_add(1, Ordering::Relaxed);
 
-                        write!(self.phone_number_buf, "+91-99-{uniq_suffix:08}").unwrap();
-                        phone_number_builder.append_value(&self.phone_number_buf);
+                        write!(phone_number_buf, "+91-99-{uniq_suffix:08}").unwrap();
+                        phone_number_builder.append_value(&phone_number_buf);
 
-                        self.phone_number_buf.clear();
+                        phone_number_buf.clear();
                     } else {
                         phone_number_builder.append_option(None::<String>);
                     }
 
-                    // Field: `Phone.phone_type`
                     builder
                         .field_builder::<StringDictionaryBuilder<UInt8Type>>(PHONE_TYPE_FIELD_INDEX)
                         .ok_or_else(|| Box::<dyn Error>::from("Expected `phone_type` field at idx: {PHONE_TYPE_FIELD_INDEX} of `Phone` struct builder."))?
                         .append_option(phone_type);
                 }
 
-                self.phones.append(true);
+                phones.append(true);
             }
         }
 
-        self.current_chunks += 1;
-
-        Ok(())
-    }
-
-    fn try_inner(&mut self) -> Result<RecordBatch, ArrowError> {
         let rb = RecordBatch::try_new(
             self.schema.clone(),
-            vec![Arc::new(self.name.finish()), Arc::new(self.phones.finish())],
+            vec![Arc::new(name.finish()), Arc::new(phones.finish())],
         )?;
 
-        self.name = StringBuilder::new();
-
-        let phone_type = StringDictionaryBuilder::<UInt8Type>::new();
-        let phone_number = StringBuilder::new();
-        let phone = StructBuilder::new(
-            get_contact_phone_fields(),
-            vec![Box::new(phone_number), Box::new(phone_type)],
-        );
-        self.phones = ListBuilder::new(phone);
-
-        self.current_chunks = 0;
-
-        Ok(rb)
-    }
-
-    fn try_get_record_batch(&mut self) -> Result<RecordBatch, Box<dyn Error>> {
-        if self.current_chunks < Self::CHUNK_MULTIPLIER {
-            return Err(Box::new(GeneratorStateError::NotEnoughChunks {
-                current: self.current_chunks,
-                required: Self::CHUNK_MULTIPLIER,
-            }));
-        }
-
-        let rb = self.try_inner()?;
-        Ok(rb)
-    }
-
-    fn try_flush_record_batch(&mut self) -> Result<RecordBatch, Box<dyn Error>> {
-        if self.current_chunks == 0 {
-            return Err(Box::new(GeneratorStateError::TryFlushZeroChunks));
-        }
-
-        // Todo: for sanity mark this GeneratorState as invalid!
-        let rb = self.try_inner()?;
         Ok(rb)
     }
 }
@@ -311,6 +186,8 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     env_logger::builder().filter_level(LevelFilter::Info).init();
 
     let target_contacts: usize = 10_000_000;
+
+    const RECORD_BATCH_SIZE: usize = 4096;
     const BASE_CHUNK_SIZE: usize = 256;
     let num_cores = rayon::current_num_threads();
     const NUM_WRITERS: usize = 2;
@@ -344,7 +221,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .build()
         .unwrap();
     pool.install(|| {
-        let chunk_count = target_contacts.div_ceil(BASE_CHUNK_SIZE);
+        let num_batches = target_contacts.div_ceil(RECORD_BATCH_SIZE);
         let parquet_schema = get_contact_schema();
 
         // Create clones of the resources that will be moved into each thread.
@@ -352,81 +229,34 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         let phone_id_counter = phone_id_counter.clone();
 
         // We will parallelize the work by giving each producer thread a range of chunks to process.
-        (0..num_producers).into_par_iter().for_each(|producer_id| {
-            // Each thread gets its own state and a clone of the senders.
-            let mut generator_state =
-                GeneratorState::new(parquet_schema.clone(), phone_id_counter.clone());
+        (0..num_batches).into_par_iter().for_each_init(
+            || {
+                (
+                    RecordBatchGenerator::new(parquet_schema.clone(), phone_id_counter.clone()),
+                    senders.clone(),
+                )
+            },
+            |(generator_state, senders), batch_index| {
+                let start_row = batch_index * RECORD_BATCH_SIZE;
+                let current_batch_size =
+                    std::cmp::min(RECORD_BATCH_SIZE, target_contacts - start_row);
 
-            // Determine the range of chunks this specific thread is responsible for.
-            let chunks_per_producer = chunk_count.div_ceil(num_producers);
-            let start_chunk = producer_id * chunks_per_producer;
-            let end_chunk = ((producer_id + 1) * chunks_per_producer).min(chunk_count);
-
-            // Process the assigned range of chunks.
-            for chunk_index in start_chunk..end_chunk {
-                let start_index = chunk_index * BASE_CHUNK_SIZE;
-                let current_chunk_size =
-                    std::cmp::min(BASE_CHUNK_SIZE, target_contacts - start_index);
-
-                if current_chunk_size == 0 {
-                    continue;
+                if current_batch_size == 0 {
+                    return;
                 }
 
-                let seed = chunk_index as u64;
-                let partial_contacts = generate_contacts_chunk(current_chunk_size, seed);
+                let rb = generator_state
+                    .get(batch_index as u64, current_batch_size)
+                    .expect("Failed to generate fused record batch");
 
-                // Append the generated data to the thread's state.
-                generator_state
-                    .append(partial_contacts)
-                    .expect("Failed to append Vec<PartialContact> to GeneratorState.");
-
-                // If enough chunks have been appended, a RecordBatch is ready. Send it.
-                if let Ok(rb) = generator_state.try_get_record_batch() {
-                    match chunk_index % 4 {
-                        0 => senders
-                            .0
-                            .send(rb)
-                            .expect("Failed to send RecordBatch to rx1"),
-                        1 => senders
-                            .1
-                            .send(rb)
-                            .expect("Failed to send RecordBatch to rx2"),
-                        2 => senders
-                            .2
-                            .send(rb)
-                            .expect("Failed to send RecordBatch to rx3"),
-                        _ => senders
-                            .3
-                            .send(rb)
-                            .expect("Failed to send RecordBatch to rx4"),
-                    }
+                match batch_index % 4 {
+                    0 => senders.0.send(rb).expect("Failed to send to rx1"),
+                    1 => senders.1.send(rb).expect("Failed to send to rx2"),
+                    2 => senders.2.send(rb).expect("Failed to send to rx3"),
+                    _ => senders.3.send(rb).expect("Failed to send to rx4"),
                 }
-            }
-
-            // After the thread has processed all its chunks, there might be leftover
-            // data in its state. We must flush this as a final RecordBatch.
-            if let Ok(rb) = generator_state.try_flush_record_batch() {
-                // We use the producer_id for round-robin distribution of the final batch.
-                match producer_id % 4 {
-                    0 => senders
-                        .0
-                        .send(rb)
-                        .expect("Failed to send final RecordBatch to rx1"),
-                    1 => senders
-                        .1
-                        .send(rb)
-                        .expect("Failed to send final RecordBatch to rx2"),
-                    2 => senders
-                        .2
-                        .send(rb)
-                        .expect("Failed to send final RecordBatch to rx3"),
-                    _ => senders
-                        .3
-                        .send(rb)
-                        .expect("Failed to send final RecordBatch to rx4"),
-                }
-            }
-        });
+            },
+        );
 
         // The original senders (tx1, tx2, etc.) are still owned by the main thread.
         // We drop them here, which closes the channels. The writer threads will
