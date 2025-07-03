@@ -1,5 +1,6 @@
 use arrow::array::{ListBuilder, StringBuilder, StringDictionaryBuilder, StructBuilder};
 use arrow::datatypes::{SchemaRef, UInt8Type};
+use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use fake::Fake;
 use fake::faker::name::en::{FirstName, LastName};
@@ -11,7 +12,7 @@ use rand::prelude::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 use std::error::Error;
-use std::fmt::Write;
+use std::fmt::{Debug, Display, Write};
 use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
@@ -99,6 +100,179 @@ struct PartialPhone(Option<PhoneType>, bool);
 
 #[derive(Debug, Clone)]
 struct PartialContact(Option<String>, Vec<PartialPhone>);
+
+#[allow(dead_code)]
+struct GeneratorState {
+    schema: SchemaRef,
+    name: StringBuilder,
+    phone_number_buf: String,
+    counter: Arc<AtomicUsize>,
+    phones: ListBuilder<StructBuilder>,
+    current_chunks: usize,
+}
+
+#[allow(dead_code)]
+enum GeneratorStateError {
+    NotEnoughChunks { current: usize, required: usize },
+    TryFlushZeroChunks,
+}
+
+impl Debug for GeneratorStateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GeneratorStateError::NotEnoughChunks { current, required } => f
+                .debug_struct("NotEnoughChunks")
+                .field("current", current)
+                .field("required", required)
+                .finish(),
+            GeneratorStateError::TryFlushZeroChunks => {
+                f.debug_struct("TryFlushZeroChunks").finish()
+            }
+        }
+    }
+}
+
+impl Display for GeneratorStateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GeneratorStateError::NotEnoughChunks { current, required } => {
+                write!(
+                    f,
+                    "Not enough chunks to build a RecordBatch. Current:{current}. Required: {required}.",
+                )
+            }
+            GeneratorStateError::TryFlushZeroChunks => {
+                write!(f, "Flush attempted but no chunks were present.")
+            }
+        }
+    }
+}
+
+impl Error for GeneratorStateError {}
+
+impl GeneratorState {
+    #[allow(dead_code)]
+    const PHONE_NUMBER_LENGTH: usize = 16;
+    #[allow(dead_code)]
+    const CHUNK_MULTIPLIER: usize = 16;
+    #[allow(dead_code)]
+    fn new(schema: SchemaRef, counter: Arc<AtomicUsize>) -> Self {
+        let name = StringBuilder::new();
+        let phone_type = StringDictionaryBuilder::<UInt8Type>::new();
+        let phone_number = StringBuilder::new();
+        let phone_number_buf = String::with_capacity(Self::PHONE_NUMBER_LENGTH);
+        let phone = StructBuilder::new(
+            get_contact_phone_fields(),
+            vec![Box::new(phone_number), Box::new(phone_type)],
+        );
+        let phones = ListBuilder::new(phone);
+
+        GeneratorState {
+            schema,
+            name,
+            phone_number_buf,
+            counter,
+            phones,
+            current_chunks: 0,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn append(&mut self, chunk: Vec<PartialContact>) -> Result<(), Box<dyn Error>> {
+        for PartialContact(name, phones) in chunk {
+            self.name.append_option(name);
+
+            if phones.is_empty() {
+                // Handles zero phones in contact
+                self.phones.append_null();
+            } else {
+                // Handles at least one ore more phones
+                let builder = self.phones.values();
+
+                for PartialPhone(phone_type, has_number) in phones {
+                    builder.append(true);
+
+                    // Field: `Phone.number`
+                    let phone_number_builder = builder
+                        .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
+                        .ok_or_else(|| {
+                            Box::<dyn Error>::from(
+                                "Expected `number` field at idx: 0 of `Phone` struct builder.",
+                            )
+                        })?;
+                    if has_number {
+                        let uniq_suffix = self.counter.fetch_add(1, Ordering::Relaxed);
+
+                        write!(self.phone_number_buf, "+91-99-{uniq_suffix:08}").unwrap();
+                        phone_number_builder.append_value(&self.phone_number_buf);
+
+                        self.phone_number_buf.clear();
+                    } else {
+                        phone_number_builder.append_option(None::<String>);
+                    }
+
+                    // Field: `Phone.phone_type`
+                    builder
+                        .field_builder::<StringDictionaryBuilder<UInt8Type>>(PHONE_TYPE_FIELD_INDEX)
+                        .ok_or_else(|| Box::<dyn Error>::from("Expected `phone_type` field at idx: {PHONE_TYPE_FIELD_INDEX} of `Phone` struct builder."))?
+                        .append_option(phone_type);
+                }
+
+                self.phones.append(true);
+            }
+        }
+
+        self.current_chunks += 1;
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn try_inner(&mut self) -> Result<RecordBatch, ArrowError> {
+        let rb = RecordBatch::try_new(
+            self.schema.clone(),
+            vec![Arc::new(self.name.finish()), Arc::new(self.phones.finish())],
+        )?;
+
+        self.name = StringBuilder::new();
+
+        let phone_type = StringDictionaryBuilder::<UInt8Type>::new();
+        let phone_number = StringBuilder::new();
+        let phone = StructBuilder::new(
+            get_contact_phone_fields(),
+            vec![Box::new(phone_number), Box::new(phone_type)],
+        );
+        self.phones = ListBuilder::new(phone);
+
+        self.current_chunks = 0;
+
+        Ok(rb)
+    }
+
+    #[allow(dead_code)]
+    fn try_get_record_batch(&mut self) -> Result<RecordBatch, Box<dyn Error>> {
+        if self.current_chunks < Self::CHUNK_MULTIPLIER {
+            return Err(Box::new(GeneratorStateError::NotEnoughChunks {
+                current: self.current_chunks,
+                required: Self::CHUNK_MULTIPLIER,
+            }));
+        }
+
+        let rb = self.try_inner()?;
+        Ok(rb)
+    }
+
+    #[allow(dead_code)]
+    fn try_flush_record_batch(&mut self) -> Result<RecordBatch, Box<dyn Error>> {
+        if self.current_chunks == 0 {
+            return Err(Box::new(GeneratorStateError::TryFlushZeroChunks));
+        }
+
+        // Todo: for sanity mark this GeneratorState as invalid!
+        let rb = self.try_inner()?;
+        Ok(rb)
+    }
+}
 
 fn to_record_batch(
     schema: SchemaRef,
