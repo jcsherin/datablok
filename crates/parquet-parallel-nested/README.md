@@ -130,3 +130,48 @@ __Resulting JSON__:
           distribution of `Contact.phones` field, but the actual number which is used is only known at runtime tracked
           by a global `AtomicUsize` counter which is incremented by 1. Requires no coordination or locking.
     * Switching to `tikv-jemallocator` had a negative impact of performance.
+
+### 1 Billion Nested Data Structures
+
+Linear scaling in performance from 10 million through 1 billion is the effect of fixed costs being amortized over longer
+runs. The current version fuses data generation with `RecordBatch` building. The producer thread control flow is
+simple. There is no extra code required for handling trailing rows which are less than the optimal `RecordBatch`
+size.
+
+```text
+➜  rusty-doodles git:(main) ✗ perf stat -e cycles,instructions,cache-references,cache-misses,branch-instructions,branch-misses ./target/release/parquet-parallel-nested                  dbu6
+[2025-07-03T18:22:25Z INFO  parquet_parallel_nested] Generating 1G contacts across 16 cores. Chunk size: 256.
+[2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 250M contacts.
+[2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 250M contacts.
+[2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 250M contacts.
+[2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 250M contacts.
+[2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Total generation and write time: 45.0708714s.
+[2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Record Throughput: 22M records/sec
+[2025-07-03T18:23:11Z INFO  parquet_parallel_nested] In-Memory Throughput: 1.13 GB/s
+
+ Performance counter stats for './target/release/parquet-parallel-nested':
+
+ 1,380,116,176,317      cycles                                                                  (83.34%)
+ 2,854,183,038,000      instructions                     #    2.07  insn per cycle              (83.32%)
+    36,862,140,938      cache-references                                                        (83.36%)
+     3,787,813,422      cache-misses                     #   10.28% of all cache refs           (83.32%)
+   527,304,886,022      branch-instructions                                                     (83.30%)
+    11,521,613,424      branch-misses                    #    2.19% of all branches             (83.36%)
+
+      45.079519917 seconds time elapsed
+
+     300.597543000 seconds user
+      28.455504000 seconds sys
+```
+
+The size of the parquet files which contains 750 million contacts each created by 4 writer threads.
+
+```text
+➜  rusty-doodles git:(main) ✗ ls contacts_*                                                                                                                                              dbu6
+contacts_1.parquet  contacts_2.parquet  contacts_3.parquet  contacts_4.parquet
+➜  rusty-doodles git:(main) ✗ ls contacts_* -lth                                                                                                                                         dbu6
+-rw-rw-r-- 1 jcsherin jcsherin 7.5G Jul  3 18:23 contacts_2.parquet
+-rw-rw-r-- 1 jcsherin jcsherin 7.5G Jul  3 18:23 contacts_3.parquet
+-rw-rw-r-- 1 jcsherin jcsherin 7.5G Jul  3 18:23 contacts_1.parquet
+-rw-rw-r-- 1 jcsherin jcsherin 7.5G Jul  3 18:23 contacts_4.parquet
+```
