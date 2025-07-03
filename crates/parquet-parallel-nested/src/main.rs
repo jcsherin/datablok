@@ -102,6 +102,7 @@ struct PartialPhone(Option<PhoneType>, bool);
 struct PartialContact(Option<String>, Vec<PartialPhone>);
 
 #[allow(dead_code)]
+#[derive(Debug)]
 struct GeneratorState {
     schema: SchemaRef,
     name: StringBuilder,
@@ -274,67 +275,6 @@ impl GeneratorState {
     }
 }
 
-fn to_record_batch(
-    schema: SchemaRef,
-    phone_id_counter: &AtomicUsize,
-    chunk: Vec<PartialContact>,
-) -> Result<RecordBatch, Box<dyn Error>> {
-    let mut name_builder = StringBuilder::new();
-
-    let phone_number_builder = StringBuilder::new();
-    let phone_type_builder = StringDictionaryBuilder::<UInt8Type>::new();
-    let phone_struct_builder = StructBuilder::new(
-        get_contact_phone_fields(),
-        vec![Box::new(phone_number_builder), Box::new(phone_type_builder)],
-    );
-
-    let mut phones_list_builder = ListBuilder::new(phone_struct_builder);
-
-    let mut phone_number_buf = String::with_capacity(16);
-
-    for PartialContact(name, phones) in chunk {
-        name_builder.append_option(name);
-
-        if phones.is_empty() {
-            phones_list_builder.append_null();
-        } else {
-            let struct_builder = phones_list_builder.values();
-
-            for PartialPhone(phone_type, has_phone_number) in phones {
-                struct_builder.append(true);
-
-                if has_phone_number {
-                    let id = phone_id_counter.fetch_add(1, Ordering::Relaxed);
-                    write!(phone_number_buf, "+91-99-{id:08}")?;
-                    struct_builder
-                        .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
-                        .unwrap()
-                        .append_value(&phone_number_buf);
-
-                    phone_number_buf.clear();
-                } else {
-                    struct_builder
-                        .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
-                        .unwrap()
-                        .append_option(None::<String>);
-                }
-
-                struct_builder
-                    .field_builder::<StringDictionaryBuilder<UInt8Type>>(PHONE_TYPE_FIELD_INDEX)
-                    .unwrap()
-                    .append_option(phone_type);
-            }
-
-            phones_list_builder.append(true);
-        }
-    }
-
-    let name_array = Arc::new(name_builder.finish());
-    let phones_array = Arc::new(phones_list_builder.finish());
-
-    RecordBatch::try_new(schema, vec![name_array, phones_array]).map_err(Into::into)
-}
-
 fn create_writer_thread(
     path: &'static str,
     rx: mpsc::Receiver<RecordBatch>,
@@ -394,7 +334,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     );
 
     // Constraint: phone numbers are unique globally
-    let phone_id_counter = AtomicUsize::new(0);
+    let phone_id_counter = Arc::new(AtomicUsize::new(0));
     let start_time = Instant::now();
 
     let (tx1, rx1) = mpsc::sync_channel::<RecordBatch>(num_producers);
@@ -411,38 +351,95 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .num_threads(num_producers)
         .build()
         .unwrap();
-
     pool.install(|| {
         let chunk_count = target_contacts.div_ceil(BASE_CHUNK_SIZE);
         let parquet_schema = get_contact_schema();
-        let senders = (tx1, tx2, tx3, tx4);
 
-        (0..chunk_count)
-            .into_par_iter()
-            .for_each_with(senders, |(s1, s2, s3, s4), chunk_index| {
+        // Create clones of the resources that will be moved into each thread.
+        let senders = (Arc::new(tx1), Arc::new(tx2), Arc::new(tx3), Arc::new(tx4));
+        let phone_id_counter = phone_id_counter.clone();
+
+        // We will parallelize the work by giving each producer thread a range of chunks to process.
+        (0..num_producers).into_par_iter().for_each(|producer_id| {
+            // Each thread gets its own state and a clone of the senders.
+            let mut generator_state =
+                GeneratorState::new(parquet_schema.clone(), phone_id_counter.clone());
+
+            // Determine the range of chunks this specific thread is responsible for.
+            let chunks_per_producer = chunk_count.div_ceil(num_producers);
+            let start_chunk = producer_id * chunks_per_producer;
+            let end_chunk = ((producer_id + 1) * chunks_per_producer).min(chunk_count);
+
+            // Process the assigned range of chunks.
+            for chunk_index in start_chunk..end_chunk {
                 let start_index = chunk_index * BASE_CHUNK_SIZE;
                 let current_chunk_size =
                     std::cmp::min(BASE_CHUNK_SIZE, target_contacts - start_index);
 
                 if current_chunk_size == 0 {
-                    return;
+                    continue;
                 }
 
                 let seed = chunk_index as u64;
-
                 let partial_contacts = generate_contacts_chunk(current_chunk_size, seed);
 
-                let record_batch =
-                    to_record_batch(parquet_schema.clone(), &phone_id_counter, partial_contacts)
-                        .expect("Failed to create RecordBatch");
+                // Append the generated data to the thread's state.
+                generator_state
+                    .append(partial_contacts)
+                    .expect("Failed to append Vec<PartialContact> to GeneratorState.");
 
-                match chunk_index % 4 {
-                    0 => s1.send(record_batch).expect("Failed to send to rx1"),
-                    1 => s2.send(record_batch).expect("Failed to send to rx2"),
-                    2 => s3.send(record_batch).expect("Failed to send to rx3"),
-                    _ => s4.send(record_batch).expect("Failed to send to rx4"),
+                // If enough chunks have been appended, a RecordBatch is ready. Send it.
+                if let Ok(rb) = generator_state.try_get_record_batch() {
+                    match chunk_index % 4 {
+                        0 => senders
+                            .0
+                            .send(rb)
+                            .expect("Failed to send RecordBatch to rx1"),
+                        1 => senders
+                            .1
+                            .send(rb)
+                            .expect("Failed to send RecordBatch to rx2"),
+                        2 => senders
+                            .2
+                            .send(rb)
+                            .expect("Failed to send RecordBatch to rx3"),
+                        _ => senders
+                            .3
+                            .send(rb)
+                            .expect("Failed to send RecordBatch to rx4"),
+                    }
                 }
-            });
+            }
+
+            // After the thread has processed all its chunks, there might be leftover
+            // data in its state. We must flush this as a final RecordBatch.
+            if let Ok(rb) = generator_state.try_flush_record_batch() {
+                // We use the producer_id for round-robin distribution of the final batch.
+                match producer_id % 4 {
+                    0 => senders
+                        .0
+                        .send(rb)
+                        .expect("Failed to send final RecordBatch to rx1"),
+                    1 => senders
+                        .1
+                        .send(rb)
+                        .expect("Failed to send final RecordBatch to rx2"),
+                    2 => senders
+                        .2
+                        .send(rb)
+                        .expect("Failed to send final RecordBatch to rx3"),
+                    _ => senders
+                        .3
+                        .send(rb)
+                        .expect("Failed to send final RecordBatch to rx4"),
+                }
+            }
+        });
+
+        // The original senders (tx1, tx2, etc.) are still owned by the main thread.
+        // We drop them here, which closes the channels. The writer threads will
+        // then finish their work and terminate gracefully.
+        drop(senders);
     });
 
     // Teardown
