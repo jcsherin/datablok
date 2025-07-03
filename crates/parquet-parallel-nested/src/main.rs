@@ -101,7 +101,6 @@ struct PartialPhone(Option<PhoneType>, bool);
 #[derive(Debug, Clone)]
 struct PartialContact(Option<String>, Vec<PartialPhone>);
 
-#[allow(dead_code)]
 #[derive(Debug)]
 struct GeneratorState {
     schema: SchemaRef,
@@ -112,7 +111,6 @@ struct GeneratorState {
     current_chunks: usize,
 }
 
-#[allow(dead_code)]
 enum GeneratorStateError {
     NotEnoughChunks { current: usize, required: usize },
     TryFlushZeroChunks,
@@ -152,11 +150,9 @@ impl Display for GeneratorStateError {
 impl Error for GeneratorStateError {}
 
 impl GeneratorState {
-    #[allow(dead_code)]
     const PHONE_NUMBER_LENGTH: usize = 16;
-    #[allow(dead_code)]
     const CHUNK_MULTIPLIER: usize = 16;
-    #[allow(dead_code)]
+
     fn new(schema: SchemaRef, counter: Arc<AtomicUsize>) -> Self {
         let name = StringBuilder::new();
         let phone_type = StringDictionaryBuilder::<UInt8Type>::new();
@@ -178,7 +174,6 @@ impl GeneratorState {
         }
     }
 
-    #[allow(dead_code)]
     fn append(&mut self, chunk: Vec<PartialContact>) -> Result<(), Box<dyn Error>> {
         for PartialContact(name, phones) in chunk {
             self.name.append_option(name);
@@ -228,7 +223,6 @@ impl GeneratorState {
         Ok(())
     }
 
-    #[allow(dead_code)]
     fn try_inner(&mut self) -> Result<RecordBatch, ArrowError> {
         let rb = RecordBatch::try_new(
             self.schema.clone(),
@@ -250,7 +244,6 @@ impl GeneratorState {
         Ok(rb)
     }
 
-    #[allow(dead_code)]
     fn try_get_record_batch(&mut self) -> Result<RecordBatch, Box<dyn Error>> {
         if self.current_chunks < Self::CHUNK_MULTIPLIER {
             return Err(Box::new(GeneratorStateError::NotEnoughChunks {
@@ -263,7 +256,6 @@ impl GeneratorState {
         Ok(rb)
     }
 
-    #[allow(dead_code)]
     fn try_flush_record_batch(&mut self) -> Result<RecordBatch, Box<dyn Error>> {
         if self.current_chunks == 0 {
             return Err(Box::new(GeneratorStateError::TryFlushZeroChunks));
