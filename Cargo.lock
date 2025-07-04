@@ -2957,6 +2957,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tantivy-packed-index"
+version = "0.1.0"
+
+[[package]]
 name = "tantivy-query-grammar"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
