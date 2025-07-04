@@ -14,7 +14,6 @@ arrow = { version = "55.0.0", default-features = false, features = ["prettyprint
 parquet = { version = "55.0.0", default-features = false, features = ["arrow"] }
 dhat = { version = "0.3.3", optional = true }
 rand = { version = "0.9.1" }
-dashmap = { version = "6.1.0", default-features = false }
 
 [features]
 dhat-heap = ["dep:dhat"]

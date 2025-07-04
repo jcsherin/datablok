@@ -1,7 +1,6 @@
 use arrow::array::{ListBuilder, StringBuilder, StringDictionaryBuilder, StructBuilder};
 use arrow::datatypes::{SchemaRef, UInt8Type};
 use arrow::record_batch::RecordBatch;
-use dashmap::DashMap;
 use fake::Fake;
 use fake::faker::name::en::{FirstName, LastName};
 use human_format::Formatter;
@@ -45,11 +44,7 @@ fn get_phone_template(rng: &mut impl Rng) -> (bool, Option<PhoneType>) {
     }
 }
 
-fn generate_name(
-    rng: &mut impl Rng,
-    name_buf: &mut String,
-    interner: &DashMap<String, Arc<String>>,
-) -> Option<Arc<String>> {
+fn generate_name(rng: &mut impl Rng, name_buf: &mut String) -> Option<String> {
     if rng.random_bool(0.8) {
         write!(
             name_buf,
@@ -59,18 +54,10 @@ fn generate_name(
         )
         .unwrap();
 
-        let name = if let Some(interned) = interner.get(name_buf) {
-            interned.clone()
-        } else {
-            let new_arc = Arc::new(name_buf.clone());
-            interner.insert(name_buf.clone(), new_arc.clone());
-            new_arc
-        };
-
-        // clear the name buffer for next use
+        let name = Some(name_buf.clone());
         name_buf.clear();
 
-        Some(name)
+        name
     } else {
         None
     }
@@ -80,22 +67,13 @@ fn generate_name(
 struct RecordBatchGenerator {
     schema: SchemaRef,
     counter: Arc<AtomicUsize>,
-    interner: Arc<DashMap<String, Arc<String>>>,
 }
 
 impl RecordBatchGenerator {
     const PHONE_NUMBER_LENGTH: usize = 16;
 
-    fn new(
-        schema: SchemaRef,
-        counter: Arc<AtomicUsize>,
-        interner: Arc<DashMap<String, Arc<String>>>,
-    ) -> Self {
-        RecordBatchGenerator {
-            schema,
-            counter,
-            interner,
-        }
+    fn new(schema: SchemaRef, counter: Arc<AtomicUsize>) -> Self {
+        RecordBatchGenerator { schema, counter }
     }
 
     fn get(&mut self, seed: u64, count: usize) -> Result<RecordBatch, Box<dyn Error>> {
@@ -113,7 +91,7 @@ impl RecordBatchGenerator {
         let mut name_buf = String::with_capacity(32);
 
         for _ in 0..count {
-            name.append_option(generate_name(rng, &mut name_buf, &self.interner).as_deref());
+            name.append_option(generate_name(rng, &mut name_buf));
 
             let phones_count = get_num_phones(rng);
             if phones_count == 0 {
@@ -242,12 +220,9 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .num_threads(num_producers)
         .build()
         .unwrap();
-
     pool.install(|| {
         let num_batches = target_contacts.div_ceil(RECORD_BATCH_SIZE);
         let parquet_schema = get_contact_schema();
-
-        let interner = Arc::new(DashMap::<String, Arc<String>>::new());
 
         // Create clones of the resources that will be moved into each thread.
         let senders = (Arc::new(tx1), Arc::new(tx2), Arc::new(tx3), Arc::new(tx4));
@@ -257,11 +232,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         (0..num_batches).into_par_iter().for_each_init(
             || {
                 (
-                    RecordBatchGenerator::new(
-                        parquet_schema.clone(),
-                        phone_id_counter.clone(),
-                        interner.clone(),
-                    ),
+                    RecordBatchGenerator::new(parquet_schema.clone(), phone_id_counter.clone()),
                     senders.clone(),
                 )
             },
