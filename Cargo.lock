@@ -2315,6 +2315,7 @@ name = "parquet-parallel-nested"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "dashmap",
  "dhat",
  "env_logger",
  "fake",
