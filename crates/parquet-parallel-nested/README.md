@@ -175,3 +175,43 @@ contacts_1.parquet  contacts_2.parquet  contacts_3.parquet  contacts_4.parquet
 -rw-rw-r-- 1 jcsherin jcsherin 7.5G Jul  3 18:23 contacts_1.parquet
 -rw-rw-r-- 1 jcsherin jcsherin 7.5G Jul  3 18:23 contacts_4.parquet
 ```
+
+### Performance Analysis: String Generation Strategies
+
+The `generate_name` method generates names with a high degree of duplication, where only ~25% of name are unique.
+The goal is to reduce the millions of small, short-lived heap allocations by comparing the baseline (no interning),
+against two caching strategies: a global shared (`DashMap`) string interner and a thread-local string interner.
+
+Counter-intuitively, both interning strategies led to significant performance regression compared to the baseline
+version.
+
+The `DashMap` version has cache-coherency issues due to multiple thread writers on shared data structure. The
+thread-local version overcomes this problem, but the overhead it introduces in hashing, `RefCell` borrow, branching
+etc. proved to be more expensive than simply making more string allocations.
+
+The result is a lesson in what appeared to be an optimization target on paper (a hot loop with many small
+allocations), in practice is already optimal.
+
+#### Raw Data: Performance Comparison (10M Run Size)
+
+| Metric                           | Baseline        | Shared `DashMap` Interner | Thread-Local Interner |
+|:---------------------------------|:----------------|:--------------------------|:----------------------|
+| **Wall Time (Elapsed)**          | **`0.440 s`**   | `0.955 s` (+117%)         | `0.793 s` (+80%)      |
+| **Record Throughput**            | **`23 M/s`**    | `11 M/s` (-52%)           | `14 M/s` (-39%)       |
+| **In-Memory Throughput**         | **`1.18 GB/s`** | `0.55 GB/s` (-53%)        | `0.72 GB/s` (-39%)    |
+|                                  |                 |                           |                       |
+| **Instructions Per Cycle (IPC)** | **`2.13`**      | `1.10` (-48%)             | `1.11` (-48%)         |
+| **Cache Miss Rate**              | **`11.39%`**    | `22.49%` (+97%)           | `15.91%` (+40%)       |
+| **Branch Miss Rate**             | **`2.16%`**     | `2.75%` (+27%)            | `3.03%` (+40%)        |
+|                                  |                 |                           |                       |
+| **Total CPU Time (User + Sys)**  | `3.155 s`       | `7.188 s` (+128%)         | `9.068 s` (+187%)     |
+| **User Time**                    | `2.834 s`       | `6.373 s`                 | `7.480 s`             |
+| **System Time**                  | `0.320 s`       | `0.814 s`                 | `1.588 s`             |
+|                                  |                 |                           |                       |
+| **Cycles**                       | `13.4 B`        | `30.9 B` (+130%)          | `38.4 B` (+186%)      |
+| **Instructions**                 | `28.6 B`        | `33.8 B` (+18%)           | `42.7 B` (+49%)       |
+| **Cache References**             | `336 M`         | `649 M` (+93%)            | `772 M` (+130%)       |
+| **Cache Misses**                 | `38.3 M`        | `146.0 M` (+281%)         | `122.9 M` (+221%)     |
+| **Branch Instructions**          | `5.31 B`        | `6.09 B` (+15%)           | `7.50 B` (+41%)       |
+| **Branch Misses**                | `115 M`         | `167 M` (+45%)            | `227 M` (+97%)        |
+
