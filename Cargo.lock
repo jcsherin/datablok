@@ -2959,6 +2959,9 @@ dependencies = [
 [[package]]
 name = "tantivy-packed-index"
 version = "0.1.0"
+dependencies = [
+ "tantivy",
+]
 
 [[package]]
 name = "tantivy-query-grammar"
