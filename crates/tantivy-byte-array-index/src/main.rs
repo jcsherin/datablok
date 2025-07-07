@@ -1,10 +1,45 @@
+use crate::doc::{Doc, DocSchema};
 use log::info;
-use tantivy::schema::{SchemaBuilder, TEXT};
-use tantivy::{Index, IndexWriter, TantivyDocument, schema};
+use tantivy::{Index, IndexWriter, TantivyDocument};
 
-struct Doc {
-    title: String,
-    body: Option<String>,
+mod doc {
+    use tantivy::schema::{Schema, SchemaBuilder, TEXT};
+
+    pub struct Doc {
+        title: String,
+        body: Option<String>,
+    }
+
+    impl Doc {
+        pub fn new(title: String, body: Option<String>) -> Self {
+            Self { title, body }
+        }
+
+        pub fn title(&self) -> &str {
+            &self.title
+        }
+
+        pub fn body(&self) -> Option<&str> {
+            self.body.as_deref()
+        }
+    }
+
+    pub struct DocSchema(Schema);
+    impl Default for DocSchema {
+        fn default() -> Self {
+            let mut schema_builder = SchemaBuilder::new();
+            schema_builder.add_text_field("title", TEXT);
+            schema_builder.add_text_field("body", TEXT);
+
+            Self(schema_builder.build())
+        }
+    }
+
+    impl DocSchema {
+        pub fn into_schema(self) -> Schema {
+            self.0
+        }
+    }
 }
 
 fn docs() -> Vec<Doc> {
@@ -16,25 +51,8 @@ fn docs() -> Vec<Doc> {
         ("The Diary of a Young Girl".to_string(), None),
     ]
     .into_iter()
-    .map(|(title, body)| Doc { title, body })
+    .map(|(title, body)| Doc::new(title, body))
     .collect()
-}
-
-struct DocSchema(schema::Schema);
-impl Default for DocSchema {
-    fn default() -> Self {
-        let mut schema_builder = SchemaBuilder::new();
-        schema_builder.add_text_field("title", TEXT);
-        schema_builder.add_text_field("body", TEXT);
-
-        Self(schema_builder.build())
-    }
-}
-
-impl DocSchema {
-    fn into_schema(self) -> schema::Schema {
-        self.0
-    }
 }
 
 fn main() -> tantivy::Result<()> {
@@ -53,8 +71,8 @@ fn main() -> tantivy::Result<()> {
 
         for doc in docs() {
             let mut tantivy_doc = TantivyDocument::default();
-            tantivy_doc.add_text(title_field, &doc.title);
-            if let Some(body) = doc.body {
+            tantivy_doc.add_text(title_field, doc.title());
+            if let Some(body) = doc.body() {
                 tantivy_doc.add_text(body_field, body);
             }
 
