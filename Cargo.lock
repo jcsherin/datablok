@@ -2920,6 +2920,8 @@ dependencies = [
 name = "tantivy-byte-array-index"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
+ "log",
  "tantivy",
 ]
 
