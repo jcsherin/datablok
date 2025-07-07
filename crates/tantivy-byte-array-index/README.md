@@ -30,3 +30,35 @@ detect incomplete writes.
 
 [RamDirectory]: https://docs.rs/tantivy/latest/tantivy/directory/struct.RamDirectory.html
 
+### How to Run
+
+From the root of the monorepo, you can run this experiment using its package
+name. The `RUST_LOG` variable is used to
+control the log output.
+
+```zsh
+RUST_LOG=info cargo run -p tantivy-byte-array-index
+```
+
+To check the code for formatting, linting, and other issues, you can use the
+verification script:
+
+```zsh
+./scripts/verify.sh tantivy-byte-array-index
+```
+
+### Expected Output
+
+```text
+// @formatter:off
+[<timestamp> INFO  tantivy::indexer::segment_updater] save metas
+[<timestamp> INFO  tantivy::indexer::index_writer] Preparing commit
+[<timestamp> INFO  tantivy::indexer::index_writer] Prepared commit 8
+[<timestamp> INFO  tantivy::indexer::prepared_commit] committing 8
+[<timestamp> INFO  tantivy::indexer::segment_updater] save metas
+[<timestamp> INFO  tantivy::indexer::segment_updater] Running garbage collection
+[<timestamp> INFO  tantivy::directory::managed_directory] Garbage collect
+[<timestamp> INFO  tantivy_byte_array_index] Matches count: 1
+[<timestamp> INFO  tantivy_byte_array_index] Matched Original Doc [ID=1]: Doc { id: 1, title: "The Diary of Muadib", body: None }
+// @formatter:on
+```

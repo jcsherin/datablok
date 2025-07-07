@@ -7,3 +7,4 @@ edition = "2024"
 env_logger = { version = "0.11.8" }
 log = { version = "0.4.27" }
 tantivy = { version = "0.24.1", default-features = false }
+once_cell = "1.21.3"
