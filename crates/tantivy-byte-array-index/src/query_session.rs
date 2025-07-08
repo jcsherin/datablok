@@ -1,8 +1,8 @@
 use crate::indexer::ImmutableIndex;
+use schema::Schema;
 use tantivy::collector::Collector;
 use tantivy::query::Query;
-use tantivy::schema::Schema;
-use tantivy::{IndexReader, Searcher};
+use tantivy::{IndexReader, Searcher, schema};
 
 pub struct QuerySession<'a> {
     index: &'a ImmutableIndex,
@@ -22,12 +22,12 @@ impl<'a> QuerySession<'a> {
         })
     }
 
-    pub fn schema(&self) -> &Schema {
-        self.index.schema()
-    }
-
     pub fn searcher(&self) -> &Searcher {
         &self.searcher
+    }
+
+    pub fn schema(&self) -> Schema {
+        self.index.schema()
     }
 
     pub fn search<C: Collector>(

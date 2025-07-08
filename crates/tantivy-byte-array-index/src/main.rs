@@ -22,7 +22,7 @@ fn main() -> tantivy::Result<()> {
     let query_session = QuerySession::new(&index)?;
     let doc_mapper = DocMapper::new(query_session.searcher(), original_docs);
 
-    let query = boolean_query::title_contains_diary_and_not_girl(query_session.schema());
+    let query = boolean_query::title_contains_diary_and_not_girl(&query_session.schema());
 
     info!("Matches count: {}", query_session.search(&query, &Count)?);
 
