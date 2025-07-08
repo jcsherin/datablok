@@ -72,6 +72,12 @@ pub fn examples() -> &'static [Doc] {
     &DOCS
 }
 
+pub trait DocIdMapper<'a> {
+    fn get_doc_id(&self, doc_address: DocAddress) -> Result<Option<u64>>;
+
+    fn get_original_doc(&self, doc_id: u64) -> Option<&'a Doc>;
+}
+
 pub struct DocMapper<'a> {
     searcher: &'a Searcher,
     id_field: Field,
@@ -92,7 +98,10 @@ impl<'a> DocMapper<'a> {
             doc_map,
         }
     }
-    pub fn get_doc_id(&self, doc_address: DocAddress) -> Result<Option<u64>> {
+}
+
+impl<'a> DocIdMapper<'a> for DocMapper<'a> {
+    fn get_doc_id(&self, doc_address: DocAddress) -> Result<Option<u64>> {
         Ok(self
             .searcher
             .doc::<TantivyDocument>(doc_address)?
@@ -100,7 +109,7 @@ impl<'a> DocMapper<'a> {
             .and_then(|v| v.as_u64()))
     }
 
-    pub fn get_original_doc(&self, doc_id: u64) -> Option<&Doc> {
+    fn get_original_doc(&self, doc_id: u64) -> Option<&'a Doc> {
         self.doc_map.get(&doc_id).copied()
     }
 }

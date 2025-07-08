@@ -6,7 +6,7 @@ mod query;
 mod query_session;
 
 use crate::config::Config;
-use crate::doc::{DocMapper, DocSchema, examples};
+use crate::doc::{DocIdMapper, DocMapper, DocSchema, examples};
 use crate::error::Result;
 use crate::index::IndexBuilder;
 use crate::query_session::QuerySession;
