@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::error::Result;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -38,18 +39,17 @@ impl Doc {
 }
 
 pub struct DocSchema(Schema);
-impl Default for DocSchema {
-    fn default() -> Self {
+impl DocSchema {
+    pub fn new(config: &Config) -> Self {
         let mut schema_builder = SchemaBuilder::new();
-        schema_builder.add_u64_field("id", INDEXED | STORED);
-        schema_builder.add_text_field("title", TEXT);
-        schema_builder.add_text_field("body", TEXT);
+
+        schema_builder.add_u64_field(config.id_field_name.as_str(), INDEXED | STORED);
+        schema_builder.add_text_field(config.title_field_name.as_str(), TEXT);
+        schema_builder.add_text_field(config.body_field_name.as_str(), TEXT);
 
         Self(schema_builder.build())
     }
-}
 
-impl DocSchema {
     pub fn into_schema(self) -> Schema {
         self.0
     }
@@ -79,8 +79,11 @@ pub struct DocMapper<'a> {
 }
 
 impl<'a> DocMapper<'a> {
-    pub fn new(searcher: &'a Searcher, docs: &'a [Doc]) -> Self {
-        let id_field = searcher.schema().get_field("id").unwrap();
+    pub fn new(searcher: &'a Searcher, config: &Config, docs: &'a [Doc]) -> Self {
+        let id_field = searcher
+            .schema()
+            .get_field(config.id_field_name.as_str())
+            .unwrap();
         let doc_map: HashMap<u64, &Doc> = docs.iter().map(|doc| (doc.id(), doc)).collect();
 
         Self {

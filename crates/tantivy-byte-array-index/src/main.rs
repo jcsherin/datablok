@@ -1,9 +1,11 @@
+mod config;
 mod doc;
 mod error;
 mod index;
 mod query;
 mod query_session;
 
+use crate::config::Config;
 use crate::doc::{DocMapper, DocSchema, examples};
 use crate::error::Result;
 use crate::index::IndexBuilder;
@@ -15,14 +17,15 @@ use tantivy::collector::{Count, DocSetCollector};
 fn main() -> Result<()> {
     setup_logging();
 
+    let config = Config::default();
     let original_docs = examples();
 
-    let index = IndexBuilder::new(DocSchema::default().into_schema())
-        .add_docs(original_docs)?
+    let index = IndexBuilder::new(DocSchema::new(&config).into_schema())
+        .add_docs(&config, original_docs)?
         .build();
 
     let query_session = QuerySession::new(&index)?;
-    let doc_mapper = DocMapper::new(query_session.searcher(), original_docs);
+    let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
 
     let query = boolean_query::title_contains_diary_and_not_girl(&query_session.schema())?;
 
