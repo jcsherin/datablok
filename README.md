@@ -1,23 +1,24 @@
 [![Rust CI](https://github.com/jcsherin/rusty-doodles/actions/workflows/ci.yml/badge.svg)](https://github.com/jcsherin/rusty-doodles/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Datablok** is a collection of high-performance experiments composed using
-database building blocks like Apache DataFusion, Arrow & Parquet.
+**Datablok** is a collection of experiments in novel and high-performance
+applications of the Rust database building blocks (Apache DataFusion, Arrow
+& Parquet).
 
 ## Highlights
 
-* [parquet-parallel-nested](./crates/parquet-parallel-nested/README.md) - A
-  parallel generator that writes one billion nested records to Parquet in ~45
-  seconds.
+* [parquet-parallel-nested](./crates/parquet-parallel-nested/README.md) -
+  Writing 1 billion nested records to Parquet with a per-core throughput of ~1.3
+  million records per second, using a multi-stage parallel pipeline.
 * [tantivy-byte-array-index](./crates/tantivy-byte-array-index/README.md) -
-  Embeds a Tantivy full-text index into a single byte array for accelerating
-  queries in Parquet using Apache DataFusion.
+  Embedding arbitrary data in Parquet and exploiting it to improve
+  DataFusion query performance. In this instance we embed a Tantivy
+  full-text index to accelerate `LIKE` queries.
 
 ## Project Goals
 
 * Test the performance limits of single-node data processing.
 * Explore novel ways of composing database building blocks.
-* Learning in public and share practical findings with the community.
 * Find and contribute improvements to the underlying libraries.
 
 ## Usage
