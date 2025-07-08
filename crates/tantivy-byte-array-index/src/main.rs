@@ -1,11 +1,11 @@
-mod config;
+mod common;
 mod doc;
 mod error;
 mod index;
 mod query;
 mod query_session;
 
-use crate::config::Config;
+use crate::common::{Config, SchemaFields};
 use crate::doc::{DocIdMapper, DocMapper, DocSchema, examples};
 use crate::error::Result;
 use crate::index::IndexBuilder;
@@ -18,10 +18,17 @@ fn main() -> Result<()> {
     setup_logging();
 
     let config = Config::default();
+    let schema = DocSchema::new(&config).into_schema();
     let original_docs = examples();
 
-    let index = IndexBuilder::new(DocSchema::new(&config).into_schema())
-        .add_docs(&config, original_docs)?
+    let fields = SchemaFields::new(&schema, &config)?;
+
+    let index = IndexBuilder::new(schema)
+        .index_and_commit(
+            config.index_writer_memory_budget_in_bytes,
+            &fields,
+            original_docs,
+        )?
         .build();
 
     let query_session = QuerySession::new(&index)?;

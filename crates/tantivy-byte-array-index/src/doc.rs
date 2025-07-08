@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::common::Config;
 use crate::error::Result;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;

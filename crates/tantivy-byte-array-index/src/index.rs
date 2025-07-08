@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::common::SchemaFields;
 use crate::doc::Doc;
 use crate::error::Result;
 use tantivy::schema::Schema;
@@ -15,22 +15,20 @@ impl IndexBuilder {
         }
     }
 
-    pub fn add_docs(self, config: &Config, docs: &[Doc]) -> Result<Self> {
-        let mut index_writer: IndexWriter = self
-            .index
-            .writer(config.index_writer_memory_budget_in_bytes)?;
-
-        let schema = self.index.schema();
-        let id_field = schema.get_field(config.id_field_name.as_str())?;
-        let title_field = schema.get_field(config.title_field_name.as_str())?;
-        let body_field = schema.get_field(config.body_field_name.as_str())?;
+    pub fn index_and_commit(
+        self,
+        memory_budget_in_bytes: usize,
+        fields: &SchemaFields,
+        docs: &[Doc],
+    ) -> Result<Self> {
+        let mut index_writer: IndexWriter = self.index.writer(memory_budget_in_bytes)?;
 
         for doc in docs {
             let mut tantivy_doc = TantivyDocument::default();
-            tantivy_doc.add_u64(id_field, doc.id());
-            tantivy_doc.add_text(title_field, doc.title());
+            tantivy_doc.add_u64(fields.id, doc.id());
+            tantivy_doc.add_text(fields.title, doc.title());
             if let Some(body) = doc.body() {
-                tantivy_doc.add_text(body_field, body);
+                tantivy_doc.add_text(fields.body, body);
             }
 
             index_writer.add_document(tantivy_doc)?;
