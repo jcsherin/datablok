@@ -1,115 +1,45 @@
 mod doc;
+mod indexer;
+mod query;
+mod query_session;
 
-use crate::doc::{Doc, DocSchema, examples};
+use crate::doc::{DocMapper, DocSchema, examples};
+use crate::indexer::IndexBuilder;
+use crate::query_session::QuerySession;
 use log::info;
-use std::collections::HashSet;
+use query::boolean_query;
 use tantivy::collector::{Count, DocSetCollector};
-use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
-use tantivy::schema::{IndexRecordOption, Schema, Value};
-use tantivy::{DocAddress, Index, IndexWriter, Searcher, TantivyDocument, Term};
 
 fn main() -> tantivy::Result<()> {
     setup_logging();
 
-    let schema = DocSchema::default().into_schema();
     let original_docs = examples();
 
-    // Creates an in-memory index using `RamDirectory`
-    let index = Index::create_in_ram(DocSchema::default().into_schema());
+    let index = IndexBuilder::new(DocSchema::default().into_schema())
+        .add_docs(original_docs)?
+        .build();
 
-    index_docs(&index, &schema, original_docs)?;
+    let query_session = QuerySession::new(&index)?;
+    let doc_mapper = DocMapper::new(query_session.searcher(), original_docs);
 
-    // Entry point to read and search the index.
-    let reader = index.reader()?;
-    let searcher = reader.searcher();
+    let query = boolean_query::title_contains_diary_and_not_girl(query_session.schema());
 
-    let query = create_boolean_query(&schema);
+    info!("Matches count: {}", query_session.search(&query, &Count)?);
 
-    // Count document matches for boolean query
-    info!("Matches count: {}", searcher.search(&query, &Count)?);
+    let results = query_session.search(&query, &DocSetCollector)?;
+    for doc_address in results {
+        let Ok(Some(doc_id)) = doc_mapper.get_doc_id(doc_address) else {
+            info!("Failed to get doc id from doc address: {doc_address:?}");
+            continue;
+        };
 
-    let fruit = searcher.search(&query, &DocSetCollector)?;
-    let doc_ids = into_doc_ids(&schema, &searcher, fruit)?;
-
-    for id in doc_ids {
-        if let Some(original_doc) = original_docs.get(id as usize) {
-            info!("Matched Original Doc [ID={id}]: {original_doc:?}");
+        if let Some(doc) = doc_mapper.get_original_doc(doc_id) {
+            info!("Matched Doc [ID={doc_id:?}]: {doc:?}")
         } else {
-            // This is a safer way to handle a potential mismatch.
-            log::warn!(
-                "Found ID {id} in index, but it was out of bounds for the original collection."
-            );
+            info!("Failed to reverse map id: {doc_id:?} to a document")
         }
     }
 
-    Ok(())
-}
-
-/// Maps search results into stored `id` fields
-fn into_doc_ids(
-    schema: &Schema,
-    searcher: &Searcher,
-    fruit: HashSet<DocAddress>,
-) -> tantivy::Result<Vec<u64>> {
-    let id_field = schema.get_field("id")?;
-
-    let doc_ids = fruit
-        .into_iter()
-        .filter_map(|doc_address| {
-            searcher
-                .doc::<TantivyDocument>(doc_address)
-                .ok()
-                .and_then(|doc| doc.get_first(id_field).and_then(|v| v.as_u64()))
-        })
-        .collect();
-
-    Ok(doc_ids)
-}
-
-/// Make a boolean query equivalent to: title:+diary title:-girl
-fn create_boolean_query(schema: &Schema) -> BooleanQuery {
-    let title_field = schema.get_field("title").unwrap();
-
-    // A term query matches all the documents containing a specific term.
-    // The `Query` trait defines a set of documents and a way to score those documents.
-    let girl_term_query: Box<dyn Query> = Box::new(TermQuery::new(
-        Term::from_field_text(title_field, "girl"),
-        IndexRecordOption::Basic, // records only the `DocId`s
-    ));
-    let diary_term_query: Box<dyn Query> = Box::new(TermQuery::new(
-        Term::from_field_text(title_field, "diary"),
-        IndexRecordOption::Basic,
-    ));
-
-    let subqueries = vec![
-        (Occur::Must, diary_term_query.box_clone()),
-        (Occur::MustNot, girl_term_query.box_clone()),
-    ];
-
-    BooleanQuery::new(subqueries)
-}
-
-const MEMORY_BUDGET_IN_BYTES: usize = 50_000_000;
-
-fn index_docs(index: &Index, schema: &Schema, docs: &[Doc]) -> tantivy::Result<()> {
-    let mut index_writer: IndexWriter = index.writer(MEMORY_BUDGET_IN_BYTES)?;
-
-    let id_field = schema.get_field("id")?;
-    let title_field = schema.get_field("title")?;
-    let body_field = schema.get_field("body")?;
-
-    for doc in docs {
-        let mut tantivy_doc = TantivyDocument::default();
-        tantivy_doc.add_u64(id_field, doc.id());
-        tantivy_doc.add_text(title_field, doc.title());
-        if let Some(body) = doc.body() {
-            tantivy_doc.add_text(body_field, body);
-        }
-
-        index_writer.add_document(tantivy_doc)?;
-    }
-
-    index_writer.commit()?;
     Ok(())
 }
 

@@ -1,6 +1,8 @@
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
-use tantivy::schema::{INDEXED, STORED, Schema, SchemaBuilder, TEXT};
+use tantivy::schema::{Field, INDEXED, STORED, Schema, SchemaBuilder, TEXT, Value};
+use tantivy::{DocAddress, Searcher, TantivyDocument};
 
 /// A global counter to ensure each ID is unique for this process.
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -65,6 +67,34 @@ static DOCS: Lazy<Vec<Doc>> = Lazy::new(|| {
     .collect()
 });
 
-pub fn examples() -> &'static Vec<Doc> {
+pub fn examples() -> &'static [Doc] {
     &DOCS
+}
+
+pub struct DocMapper<'a> {
+    searcher: &'a Searcher,
+    id_field: Field,
+    doc_map: HashMap<u64, &'a Doc>,
+}
+
+impl<'a> DocMapper<'a> {
+    pub fn new(searcher: &'a Searcher, docs: &'a [Doc]) -> Self {
+        let id_field = searcher.schema().get_field("id").unwrap();
+        let doc_map: HashMap<u64, &Doc> = docs.iter().map(|doc| (doc.id(), doc)).collect();
+
+        Self {
+            searcher,
+            id_field,
+            doc_map,
+        }
+    }
+    pub fn get_doc_id(&self, doc_address: DocAddress) -> tantivy::Result<Option<u64>> {
+        self.searcher
+            .doc::<TantivyDocument>(doc_address)
+            .map(|doc| doc.get_first(self.id_field).and_then(|v| v.as_u64()))
+    }
+
+    pub fn get_original_doc(&self, doc_id: u64) -> Option<&Doc> {
+        self.doc_map.get(&doc_id).copied()
+    }
 }
