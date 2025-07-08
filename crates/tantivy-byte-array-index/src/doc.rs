@@ -1,3 +1,4 @@
+use crate::error::Result;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
@@ -88,10 +89,12 @@ impl<'a> DocMapper<'a> {
             doc_map,
         }
     }
-    pub fn get_doc_id(&self, doc_address: DocAddress) -> tantivy::Result<Option<u64>> {
-        self.searcher
-            .doc::<TantivyDocument>(doc_address)
-            .map(|doc| doc.get_first(self.id_field).and_then(|v| v.as_u64()))
+    pub fn get_doc_id(&self, doc_address: DocAddress) -> Result<Option<u64>> {
+        Ok(self
+            .searcher
+            .doc::<TantivyDocument>(doc_address)?
+            .get_first(self.id_field)
+            .and_then(|v| v.as_u64()))
     }
 
     pub fn get_original_doc(&self, doc_id: u64) -> Option<&Doc> {

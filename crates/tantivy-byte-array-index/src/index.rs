@@ -1,4 +1,5 @@
 use crate::doc::Doc;
+use crate::error::Result;
 use tantivy::schema::Schema;
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument};
 
@@ -14,7 +15,7 @@ impl IndexBuilder {
     }
 
     const MEMORY_BUDGET_IN_BYTES: usize = 50_000_000;
-    pub fn add_docs(self, docs: &[Doc]) -> tantivy::Result<Self> {
+    pub fn add_docs(self, docs: &[Doc]) -> Result<Self> {
         let mut index_writer: IndexWriter = self.index.writer(Self::MEMORY_BUDGET_IN_BYTES)?;
 
         let schema = self.index.schema();
@@ -52,8 +53,8 @@ impl ImmutableIndex {
         Self { index }
     }
 
-    pub fn reader(&self) -> tantivy::Result<IndexReader> {
-        self.index.reader()
+    pub fn reader(&self) -> Result<IndexReader> {
+        Ok(self.index.reader()?)
     }
 
     pub fn schema(&self) -> Schema {

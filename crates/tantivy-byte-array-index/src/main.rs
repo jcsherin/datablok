@@ -1,16 +1,18 @@
 mod doc;
+mod error;
 mod index;
 mod query;
 mod query_session;
 
 use crate::doc::{DocMapper, DocSchema, examples};
+use crate::error::Result;
 use crate::index::IndexBuilder;
 use crate::query_session::QuerySession;
 use log::info;
 use query::boolean_query;
 use tantivy::collector::{Count, DocSetCollector};
 
-fn main() -> tantivy::Result<()> {
+fn main() -> Result<()> {
     setup_logging();
 
     let original_docs = examples();
@@ -22,7 +24,7 @@ fn main() -> tantivy::Result<()> {
     let query_session = QuerySession::new(&index)?;
     let doc_mapper = DocMapper::new(query_session.searcher(), original_docs);
 
-    let query = boolean_query::title_contains_diary_and_not_girl(&query_session.schema());
+    let query = boolean_query::title_contains_diary_and_not_girl(&query_session.schema())?;
 
     info!("Matches count: {}", query_session.search(&query, &Count)?);
 

@@ -1,3 +1,4 @@
+use crate::error::Result;
 use crate::index::ImmutableIndex;
 use schema::Schema;
 use tantivy::collector::Collector;
@@ -11,7 +12,7 @@ pub struct QuerySession<'a> {
 }
 
 impl<'a> QuerySession<'a> {
-    pub fn new(index: &'a ImmutableIndex) -> tantivy::Result<Self> {
+    pub fn new(index: &'a ImmutableIndex) -> Result<Self> {
         let reader = index.reader()?;
         let searcher = reader.searcher();
 
@@ -30,11 +31,7 @@ impl<'a> QuerySession<'a> {
         self.index.schema()
     }
 
-    pub fn search<C: Collector>(
-        &self,
-        query: &dyn Query,
-        collector: &C,
-    ) -> tantivy::Result<C::Fruit> {
-        self.searcher.search(query, collector)
+    pub fn search<C: Collector>(&self, query: &dyn Query, collector: &C) -> Result<C::Fruit> {
+        Ok(self.searcher.search(query, collector)?)
     }
 }

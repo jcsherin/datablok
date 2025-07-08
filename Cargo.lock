@@ -2924,6 +2924,7 @@ dependencies = [
  "log",
  "once_cell",
  "tantivy",
+ "thiserror",
 ]
 
 [[package]]
