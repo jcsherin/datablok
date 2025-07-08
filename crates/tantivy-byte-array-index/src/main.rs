@@ -1,10 +1,10 @@
 mod doc;
-mod indexer;
+mod index;
 mod query;
 mod query_session;
 
 use crate::doc::{DocMapper, DocSchema, examples};
-use crate::indexer::IndexBuilder;
+use crate::index::IndexBuilder;
 use crate::query_session::QuerySession;
 use log::info;
 use query::boolean_query;

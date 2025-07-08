@@ -1,4 +1,4 @@
-use crate::indexer::ImmutableIndex;
+use crate::index::ImmutableIndex;
 use schema::Schema;
 use tantivy::collector::Collector;
 use tantivy::query::Query;
