@@ -1,11 +1,29 @@
 [![Rust CI](https://github.com/jcsherin/rusty-doodles/actions/workflows/ci.yml/badge.svg)](https://github.com/jcsherin/rusty-doodles/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A monorepo experimenting with the internals of data systems in Rust, focusing on Apache DataFusion, Arrow, and Parquet.
+**Datablok** is a collection of high-performance experiments composed using
+database building blocks like Apache DataFusion, Arrow & Parquet.
+
+## Highlights
+
+* [parquet-parallel-nested](./crates/parquet-parallel-nested/README.md) - A
+  parallel generator that writes one billion nested records to Parquet in ~45
+  seconds.
+* [tantivy-byte-array-index](./crates/tantivy-byte-array-index/README.md) -
+  Embeds a Tantivy full-text index into a single byte array for accelerating
+  queries in Parquet using Apache DataFusion.
+
+## Project Goals
+
+* Test the performance limits of single-node data processing.
+* Explore novel ways of composing database building blocks.
+* Learning in public and share practical findings with the community.
+* Find and contribute improvements to the underlying libraries.
 
 ## Usage
 
-To run a specific experiment, use the `-p` or `--package` flag for cargo from the root of the repository.
+To run a specific experiment, use the `-p` or `--package` flag for cargo from
+the root of the repository.
 
 For example, to run the `hello-datafusion` doodle:
 
@@ -15,8 +33,10 @@ cargo run -p hello-datafusion
 
 ## Local Development
 
-The `verify.sh` script mirrors the CI pipeline. Running this script is a good practice before pushing code changes to
-prevent failures in CI. Catching errors locally is much faster than waiting for the CI pipeline to discover them.
+The `verify.sh` script mirrors the CI pipeline. Running this script is a good
+practice before pushing code changes to
+prevent failures in CI. Catching errors locally is much faster than waiting for
+the CI pipeline to discover them.
 
 ```zsh
 # Run all checks on the 'hello-datafusion' package
