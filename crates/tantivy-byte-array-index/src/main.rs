@@ -12,6 +12,8 @@ use crate::index::IndexBuilder;
 use crate::query_session::QuerySession;
 use log::info;
 use query::boolean_query;
+use std::path::PathBuf;
+use tantivy::Directory;
 use tantivy::collector::{Count, DocSetCollector};
 
 fn main() -> Result<()> {
@@ -30,6 +32,28 @@ fn main() -> Result<()> {
             original_docs,
         )?
         .build();
+
+    let dir = index.directory();
+    for path in dir.list_managed_files() {
+        info!("path: {path:?}");
+
+        if path.eq(&PathBuf::from("meta.json")) {
+            let contents = dir
+                .atomic_read(&path)
+                .unwrap_or_else(|e| panic!("Error: {e} while reading metadata file: {path:?}"));
+
+            info!("-- size={} bytes", contents.len());
+        } else {
+            let file_slice = dir
+                .open_read(&path)
+                .unwrap_or_else(|e| panic!("Error: {e} while opening file: {path:?}"));
+
+            for (idx, chunk) in file_slice.stream_file_chunks().enumerate() {
+                let chunk = chunk.unwrap();
+                info!("-- chunk id:{idx} size={} bytes", chunk.len());
+            }
+        }
+    }
 
     let query_session = QuerySession::new(&index)?;
     let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
