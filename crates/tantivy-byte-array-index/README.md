@@ -1,34 +1,42 @@
 ### Byte Array Index
 
-The Tantivy library can create a full-text search index that can be stored
-in a custom byte array (`Vec<u8>`) format. This byte array is then embedded
-within a Parquet file as a secondary index, placed between the data pages
-and the metadata. This approach ensures backwards compatibility, as standard
-Parquet readers ignore the unrecognized data. Apache DataFusion, however,
-can be extended to leverage this embedded index to accelerate text-based
-`LIKE` queries.
+In Parquet format it is possible to extend it by writing arbitrary bytes between
+the data pages and the metadata. This is an advanced implementation where we
+embed a full-text search index inside Parquet, and use Apache DataFusion to
+accelerate `LIKE` queries on the indexed text columns.
 
 ### Sketch
 
-The following sketch outlines the multi-stage pipeline used to implement the
-byte array index described above.
+### Phase 1
 
-The process begins by building the index in memory using [RamDirectory].
-While `RamDirectory` contains all the necessary data, the metadata required to
-assemble it into a single-byte array is private to its implementation.
+While the Parquet file is being created, in parallel create the full-text index
+using the [Tantivy] library. The challenge here is to convert the index data
+into a byte array which can be embedded in Parquet.
 
-To overcome this, we use the `persist` method provided by `RamDirectory` to copy
-its contents into `TmpDirectory`, an intermediate representation that
-exposes this crucial file metadata. This enables a final, single-pass
-transformation that assembles the contents into a `BlobDirectory`.
+[Tantivy]: https://github.com/quickwit-oss/tantivy
 
-The `BlobDirectory` uses a compact, archive-like format. It begins with a 4-byte
-magic number, followed by a header containing the file metadata. The contents of
-each index file are written sequentially after the header. The format concludes
-by repeating the magic number, which allows for simple integrity checks to
-detect incomplete writes.
+After the index is committed, we will first write the directory manifest to
+the beginning of the byte array. Then copy the contents from each file and
+append it to this byte array. With a single-pass we will have a read-only
+full-text index represented as a byte array which is now ready to be written
+to the Parquet file. The
 
-[RamDirectory]: https://docs.rs/tantivy/latest/tantivy/directory/struct.RamDirectory.html
+The offset of this byte array can be stored in the file
+metadata, [key_value_metadata] field. This is backwards compatible as existing
+Parquet readers will skip the byte array which is not a data page. It will not
+affect existing query performance.
+
+[key_value_metadata]: https://github.com/apache/parquet-format/blob/819adce0ec6aa848e56c56f20b9347f4ab50857f/src/main/thrift/parquet.thrift#L1266-L1267
+
+We will then implement the [Directory trait] which knows how to read the bytes
+embedded in the Parquet file. We can check that the byte array index works
+by using this trait implementation to run Tantivy search queries.
+
+[Directory trait]: https://docs.rs/tantivy/0.24.1/tantivy/directory/trait.Directory.html
+
+#### Phase 2
+
+_TODO_
 
 ### How to Run
 
