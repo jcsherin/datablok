@@ -12,9 +12,58 @@ use crate::index::IndexBuilder;
 use crate::query_session::QuerySession;
 use log::info;
 use query::boolean_query;
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
-use tantivy::Directory;
 use tantivy::collector::{Count, DocSetCollector};
+use tantivy::{Directory, HasLen};
+
+#[derive(Debug, PartialEq)]
+struct FileMetadata {
+    path: PathBuf,
+    file_size: u32,
+}
+
+impl FileMetadata {
+    pub fn new(path: PathBuf, size_in_bytes: u32) -> Self {
+        Self {
+            path,
+            file_size: size_in_bytes,
+        }
+    }
+
+    fn to_bytes(&self, path_as_bytes: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(4 + 4 + path_as_bytes.len());
+
+        let path_len = path_as_bytes.len() as u32;
+
+        bytes.extend(path_len.to_le_bytes());
+        bytes.extend(self.file_size.to_le_bytes());
+        bytes.extend(path_as_bytes);
+
+        bytes
+    }
+}
+
+#[cfg(unix)]
+impl From<FileMetadata> for Vec<u8> {
+    fn from(value: FileMetadata) -> Self {
+        let path_as_bytes = value.path.as_os_str().as_bytes();
+
+        value.to_bytes(path_as_bytes)
+    }
+}
+
+// rustup target add x86_64-pc-windows-gnu
+// cargo check --target x86_64-pc-windows-gnu
+#[cfg(not(unix))]
+impl From<FileMetadata> for Vec<u8> {
+    fn from(value: FileMetadata) -> Self {
+        let path_string = value.path.to_string_lossy();
+        let path_as_bytes = path_string.as_bytes();
+
+        value.to_bytes(path_as_bytes)
+    }
+}
 
 fn main() -> Result<()> {
     setup_logging();
@@ -33,26 +82,33 @@ fn main() -> Result<()> {
         )?
         .build();
 
+    let metadata_file = PathBuf::from("meta.json");
     let dir = index.directory();
-    for path in dir.list_managed_files() {
-        info!("path: {path:?}");
 
-        if path.eq(&PathBuf::from("meta.json")) {
+    for path in dir.list_managed_files() {
+        let size_in_bytes = if path.eq(&metadata_file) {
             let contents = dir
                 .atomic_read(&path)
                 .unwrap_or_else(|e| panic!("Error: {e} while reading metadata file: {path:?}"));
 
-            info!("-- size={} bytes", contents.len());
+            contents.len()
         } else {
             let file_slice = dir
                 .open_read(&path)
                 .unwrap_or_else(|e| panic!("Error: {e} while opening file: {path:?}"));
 
-            for (idx, chunk) in file_slice.stream_file_chunks().enumerate() {
-                let chunk = chunk.unwrap();
-                info!("-- chunk id:{idx} size={} bytes", chunk.len());
-            }
-        }
+            file_slice.len()
+        };
+
+        let file_metadata = FileMetadata::new(path.clone(), size_in_bytes as u32);
+
+        info!(
+            "Path size={0}, size in bytes={size_in_bytes}, path={path:?}",
+            path.as_os_str().len()
+        );
+
+        let bytes: Vec<u8> = file_metadata.into();
+        info!("bytes: {bytes:?}");
     }
 
     let query_session = QuerySession::new(&index)?;
