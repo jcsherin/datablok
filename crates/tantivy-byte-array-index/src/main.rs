@@ -12,18 +12,23 @@ use crate::index::IndexBuilder;
 use crate::query_session::QuerySession;
 use log::info;
 use query::boolean_query;
+use std::array::TryFromSliceError;
+use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use tantivy::collector::{Count, DocSetCollector};
 use tantivy::{Directory, HasLen};
+use thiserror::Error;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct FileMetadata {
     path: PathBuf,
     file_size: u32,
 }
 
 impl FileMetadata {
+    const HEADER_SIZE_IN_BYTES: u8 = 8;
+
     pub fn new(path: PathBuf, size_in_bytes: u32) -> Self {
         Self {
             path,
@@ -44,7 +49,6 @@ impl FileMetadata {
     }
 }
 
-#[cfg(unix)]
 impl From<FileMetadata> for Vec<u8> {
     fn from(value: FileMetadata) -> Self {
         let path_as_bytes = value.path.as_os_str().as_bytes();
@@ -53,15 +57,43 @@ impl From<FileMetadata> for Vec<u8> {
     }
 }
 
-// rustup target add x86_64-pc-windows-gnu
-// cargo check --target x86_64-pc-windows-gnu
-#[cfg(not(unix))]
-impl From<FileMetadata> for Vec<u8> {
-    fn from(value: FileMetadata) -> Self {
-        let path_string = value.path.to_string_lossy();
-        let path_as_bytes = path_string.as_bytes();
+#[derive(Error, Debug)]
+enum FileMetadataError {
+    #[error("Header does not contain path length and data size.")]
+    IncompleteHeader,
 
-        value.to_bytes(path_as_bytes)
+    #[error("Path name got truncated.")]
+    PathNameTruncated,
+
+    #[error("Failed to convert slice to array")]
+    ConversionError(#[from] TryFromSliceError),
+}
+
+impl TryFrom<Vec<u8>> for FileMetadata {
+    type Error = Box<dyn std::error::Error>;
+
+    fn try_from(bytes: Vec<u8>) -> std::result::Result<Self, Self::Error> {
+        let input_size = bytes.len();
+
+        if input_size < FileMetadata::HEADER_SIZE_IN_BYTES as usize {
+            return Err(Box::new(FileMetadataError::IncompleteHeader));
+        }
+
+        let path_len_bytes: [u8; 4] = bytes[0..4].try_into()?;
+        let path_len = u32::from_le_bytes(path_len_bytes) as usize;
+
+        let file_size_bytes: [u8; 4] = bytes[4..8].try_into()?;
+        let file_size = u32::from_le_bytes(file_size_bytes);
+
+        if input_size < (FileMetadata::HEADER_SIZE_IN_BYTES as usize + path_len) {
+            return Err(Box::new(FileMetadataError::PathNameTruncated));
+        }
+
+        let path_bytes = &bytes[8..(8 + path_len)];
+        let os_str = OsStr::from_bytes(path_bytes);
+        let path = PathBuf::from(os_str);
+
+        Ok(Self { path, file_size })
     }
 }
 
@@ -140,4 +172,53 @@ fn setup_logging() {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::FileMetadata;
+    use std::path::PathBuf;
+
+    #[test]
+    fn file_metadata_roundtrip_bytes() {
+        let path = PathBuf::from("abf90497f35b4d37a4f7843aa5780be2.fieldnorm");
+        let file_metadata = FileMetadata::new(path, 42);
+
+        let bytes: Vec<u8> = file_metadata.clone().into();
+        let round_tripped: FileMetadata = bytes.try_into().unwrap();
+
+        assert_eq!(round_tripped, file_metadata);
+    }
+
+    #[test]
+    fn file_metadata_incomplete_header_error() {
+        let bytes: Vec<u8> = vec![1, 2, 3, 4, 5];
+
+        let result: Result<FileMetadata, _> = bytes.try_into();
+
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Header does not contain path length and data size."
+        );
+    }
+
+    #[test]
+    fn file_metadata_truncated_data_error() {
+        // Path length is 50 bytes but the data is only 5 bytes
+        let bytes: Vec<u8> = vec![
+            50, 0, 0, 0, // Path length = 50
+            10, 0, 0, 0, // File size = 10
+            1, 2, 3, 4, 5, // Only 5 bytes of path data
+        ];
+
+        let result: Result<FileMetadata, _> = bytes.try_into();
+
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert_eq!(err.to_string(), "Path name got truncated.");
+    }
 }
