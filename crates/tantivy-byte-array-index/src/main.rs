@@ -21,11 +21,9 @@ use tantivy::{Directory, HasLen};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-enum FileMetadataError {
-    #[error(
-        "Malformed header detected. Header size: {bytes_len} is insufficient to hold metadata."
-    )]
-    MalformedHeader { bytes_len: usize },
+enum IndexFormatError {
+    #[error("Malformed header detected. Header size: {actual} is insufficient to hold metadata.")]
+    TruncatedHeader { actual: usize },
 
     #[error(
         "Path len in header is {expected} bytes, but stored path truncated after {actual} bytes"
@@ -89,12 +87,12 @@ impl From<FileMetadata> for Vec<u8> {
 }
 
 impl TryFrom<Vec<u8>> for FileMetadata {
-    type Error = FileMetadataError;
+    type Error = IndexFormatError;
 
     fn try_from(bytes: Vec<u8>) -> std::result::Result<Self, Self::Error> {
         if bytes.len() < FILE_METADATA_HEADER_SIZE {
-            return Err(FileMetadataError::MalformedHeader {
-                bytes_len: bytes.len(),
+            return Err(IndexFormatError::TruncatedHeader {
+                actual: bytes.len(),
             });
         }
 
@@ -113,7 +111,7 @@ impl TryFrom<Vec<u8>> for FileMetadata {
 
         let remaining_len = cursor.get_ref().len() - (cursor.position() as usize);
         if remaining_len < path_len.into() {
-            return Err(FileMetadataError::TruncatedPath {
+            return Err(IndexFormatError::TruncatedPath {
                 expected: path_len.into(),
                 actual: remaining_len,
             });
@@ -136,8 +134,8 @@ impl TryFrom<Vec<u8>> for FileMetadata {
 struct Header {
     version: u8,
     file_count: u32,
-    _file_metadata_size: u32,
-    _file_metadata_crc32: u32,
+    file_metadata_size: u32,
+    file_metadata_crc32: u32,
     file_metadata_list: Vec<FileMetadata>,
 }
 const MAGIC_BYTES: &[u8; 4] = b"FTEP"; // Full-Text index Embedded in Parquet
@@ -148,8 +146,8 @@ impl Default for Header {
         Self {
             version: VERSION,
             file_count: 0,
-            _file_metadata_size: 0,
-            _file_metadata_crc32: 0,
+            file_metadata_size: 0,
+            file_metadata_crc32: 0,
             file_metadata_list: Vec::new(),
         }
     }
@@ -190,6 +188,26 @@ impl HeaderBuilder {
         self
     }
 
+    pub fn with_version(mut self, version: u8) -> HeaderBuilder {
+        self.inner.version = version;
+        self
+    }
+
+    pub fn with_file_count(mut self, count: u32) -> HeaderBuilder {
+        self.inner.file_count = count;
+        self
+    }
+
+    pub fn with_file_metadata_size(mut self, size: u32) -> HeaderBuilder {
+        self.inner.file_metadata_size = size;
+        self
+    }
+
+    pub fn with_file_metadata_crc32(mut self, crc32: u32) -> HeaderBuilder {
+        self.inner.file_metadata_crc32 = crc32;
+        self
+    }
+
     pub fn build(self) -> Header {
         self.inner
     }
@@ -208,9 +226,10 @@ impl From<Header> for Vec<u8> {
             file_metadata_bytes.extend::<Vec<u8>>(file_metadata.into());
         }
 
+        let file_metadata_size = file_metadata_bytes.len() as u32;
         let file_metadata_crc32 = crc32fast::hash(file_metadata_bytes.as_slice());
 
-        bytes.extend(file_metadata_bytes.len().to_le_bytes());
+        bytes.extend(file_metadata_size.to_le_bytes());
         bytes.extend(file_metadata_crc32.to_le_bytes());
         bytes.extend(file_metadata_bytes);
 
@@ -218,14 +237,50 @@ impl From<Header> for Vec<u8> {
     }
 }
 
-#[derive(Error, Debug)]
-pub enum HeaderError {}
+impl TryFrom<Vec<u8>> for Header {
+    type Error = IndexFormatError;
 
-impl TryFrom<Vec<u8>> for HeaderBuilder {
-    type Error = HeaderError;
+    fn try_from(bytes: Vec<u8>) -> std::result::Result<Self, Self::Error> {
+        if bytes.len() < HEADER_SIZE {
+            return Err(IndexFormatError::TruncatedHeader {
+                actual: bytes.len(),
+            });
+        }
 
-    fn try_from(_value: Vec<u8>) -> std::result::Result<Self, Self::Error> {
-        todo!()
+        let mut cursor = std::io::Cursor::new(bytes);
+
+        let mut header_builder = HeaderBuilder::new();
+
+        let mut u32_buffer = [0u8; 4];
+        cursor.read_exact(&mut u32_buffer)?; // magic bytes
+        debug_assert!(u32_buffer.eq(MAGIC_BYTES));
+
+        let mut u8_buffer = [0u8; 1];
+        cursor.read_exact(&mut u8_buffer)?;
+        debug_assert_eq!(u8_buffer[0], VERSION);
+        header_builder = header_builder.with_version(u8_buffer[0]);
+
+        let mut file_count_buffer = [0u8; 4];
+        cursor.read_exact(&mut file_count_buffer)?;
+        header_builder = header_builder.with_file_count(u32::from_le_bytes(file_count_buffer));
+
+        let mut file_metadata_size_buffer = [0u8; 4];
+        cursor.read_exact(&mut file_metadata_size_buffer)?;
+        let file_metadata_size = u32::from_le_bytes(file_metadata_size_buffer);
+        header_builder = header_builder.with_file_metadata_size(file_metadata_size);
+
+        let mut file_metadata_crc32_buffer = [0u8; 4];
+        cursor.read_exact(&mut file_metadata_crc32_buffer)?;
+        let file_metadata_crc32 = u32::from_le_bytes(file_metadata_crc32_buffer);
+        header_builder = header_builder.with_file_metadata_crc32(file_metadata_crc32);
+
+        let mut file_metadata_list_buffer = vec![0u8; file_metadata_size as usize];
+        cursor.read_exact(&mut file_metadata_list_buffer)?;
+
+        let crc32 = crc32fast::hash(&file_metadata_list_buffer);
+        debug_assert!(crc32 == file_metadata_crc32);
+
+        Ok(header_builder.build())
     }
 }
 
@@ -293,7 +348,12 @@ fn main() -> Result<()> {
         u32::to_le_bytes(total_bytes)
     );
 
-    info!("header: {:?}", Into::<Vec<u8>>::into(header));
+    let header_bytes: Vec<u8> = header.into();
+    info!("header: {header_bytes:?}");
+
+    let roundtripped_header: Header = header_bytes.try_into().unwrap();
+    info!("roundtripped_header: {roundtripped_header:#?}");
+
     info!("magic: {MAGIC_BYTES:?}");
 
     let query_session = QuerySession::new(&index)?;
