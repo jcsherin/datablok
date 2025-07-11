@@ -182,7 +182,7 @@ impl From<Header> for Vec<u8> {
         let mut bytes = Vec::new();
 
         bytes.extend(MAGIC_BYTES);
-        bytes.extend(value.version.to_le_bytes());
+        bytes.push(VERSION);
         bytes.extend(value.file_count.to_le_bytes());
 
         let mut file_metadata_bytes = Vec::new();
