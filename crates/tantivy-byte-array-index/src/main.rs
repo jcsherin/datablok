@@ -155,6 +155,24 @@ impl Default for Header {
     }
 }
 
+impl Header {
+    const MAGIC_BYTES_LEN: u8 = 4;
+    const VERSION_LEN: u8 = 1;
+    const FILE_COUNT_LEN: u8 = 4;
+    const FILE_METADATA_SIZE_LEN: u8 = 4;
+    const FILE_METADATA_CRC32_LEN: u8 = 4;
+
+    const fn header_size() -> usize {
+        (Self::MAGIC_BYTES_LEN
+            + Self::VERSION_LEN
+            + Self::FILE_COUNT_LEN
+            + Self::FILE_METADATA_SIZE_LEN
+            + Self::FILE_METADATA_CRC32_LEN) as usize
+    }
+}
+
+const HEADER_SIZE: usize = Header::header_size();
+
 struct HeaderBuilder {
     inner: Header,
 }
