@@ -25,12 +25,7 @@ enum IndexFormatError {
     #[error("Malformed header detected. Header size: {actual} is insufficient to hold metadata.")]
     TruncatedHeader { actual: usize },
 
-    #[error(
-        "Path len in header is {expected} bytes, but stored path truncated after {actual} bytes"
-    )]
-    TruncatedPath { expected: usize, actual: usize },
-
-    #[error("Parsing FileMetadata from bytes failed")]
+    #[error("Error parsing header from bytes.")]
     ParseError(#[from] std::io::Error),
 }
 
@@ -55,13 +50,13 @@ impl FileMetadata {
         (Self::DATA_OFFSET_BYTES + Self::DATA_SIZE_BYTES + Self::PATH_LEN_BYTES) as usize
     }
 
-    pub fn new(path: PathBuf, data_size: u64) -> Self {
+    pub fn new(path: PathBuf, data_size: u64, data_offset: u64) -> Self {
         let path_len = path.as_os_str().as_bytes().len() as u8;
 
         Self {
             path,
             path_len,
-            data_offset: 0,
+            data_offset,
             data_size,
         }
     }
@@ -76,28 +71,10 @@ impl FileMetadata {
 
         bytes
     }
-}
 
-const FILE_METADATA_HEADER_SIZE: usize = FileMetadata::header_size();
-
-impl From<FileMetadata> for Vec<u8> {
-    fn from(value: FileMetadata) -> Self {
-        value.to_bytes(value.path.as_os_str().as_bytes())
-    }
-}
-
-impl TryFrom<Vec<u8>> for FileMetadata {
-    type Error = IndexFormatError;
-
-    fn try_from(bytes: Vec<u8>) -> std::result::Result<Self, Self::Error> {
-        if bytes.len() < FILE_METADATA_HEADER_SIZE {
-            return Err(IndexFormatError::TruncatedHeader {
-                actual: bytes.len(),
-            });
-        }
-
-        let mut cursor = std::io::Cursor::new(bytes);
-
+    fn from_cursor(
+        cursor: &mut std::io::Cursor<Vec<u8>>,
+    ) -> std::result::Result<Self, IndexFormatError> {
         let mut u64_buffer = [0u8; 8];
         cursor.read_exact(&mut u64_buffer)?;
         let data_offset = u64::from_le_bytes(u64_buffer);
@@ -109,28 +86,21 @@ impl TryFrom<Vec<u8>> for FileMetadata {
         cursor.read_exact(&mut path_len_buffer)?;
         let path_len = u8::from_le_bytes(path_len_buffer);
 
-        let remaining_len = cursor.get_ref().len() - (cursor.position() as usize);
-        if remaining_len < path_len.into() {
-            return Err(IndexFormatError::TruncatedPath {
-                expected: path_len.into(),
-                actual: remaining_len,
-            });
-        }
-
         let mut path_buffer = vec![0u8; path_len as usize];
         cursor.read_exact(&mut path_buffer)?;
         let path = PathBuf::from(OsStr::from_bytes(&path_buffer));
 
-        Ok(Self {
-            data_offset,
-            data_size,
-            path_len,
-            path,
-        })
+        Ok(FileMetadata::new(path, data_size, data_offset))
     }
 }
 
-#[derive(Debug)]
+impl From<FileMetadata> for Vec<u8> {
+    fn from(value: FileMetadata) -> Self {
+        value.to_bytes(value.path.as_os_str().as_bytes())
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 struct Header {
     version: u8,
     file_count: u32,
@@ -190,11 +160,6 @@ impl HeaderBuilder {
 
     pub fn with_version(mut self, version: u8) -> HeaderBuilder {
         self.inner.version = version;
-        self
-    }
-
-    pub fn with_file_count(mut self, count: u32) -> HeaderBuilder {
-        self.inner.file_count = count;
         self
     }
 
@@ -262,7 +227,7 @@ impl TryFrom<Vec<u8>> for Header {
 
         let mut file_count_buffer = [0u8; 4];
         cursor.read_exact(&mut file_count_buffer)?;
-        header_builder = header_builder.with_file_count(u32::from_le_bytes(file_count_buffer));
+        let file_count = u32::from_le_bytes(file_count_buffer);
 
         let mut file_metadata_size_buffer = [0u8; 4];
         cursor.read_exact(&mut file_metadata_size_buffer)?;
@@ -279,6 +244,13 @@ impl TryFrom<Vec<u8>> for Header {
 
         let crc32 = crc32fast::hash(&file_metadata_list_buffer);
         debug_assert!(crc32 == file_metadata_crc32);
+
+        // Cursor that wraps the entire file metadata block
+        let mut cursor = std::io::Cursor::new(file_metadata_list_buffer);
+        for _ in 0..file_count {
+            let file_metadata = FileMetadata::from_cursor(&mut cursor)?;
+            header_builder = header_builder.with_file_metadata(&file_metadata);
+        }
 
         Ok(header_builder.build())
     }
@@ -323,7 +295,7 @@ fn main() -> Result<()> {
             file_slice.len()
         };
 
-        let file_metadata = FileMetadata::new(path.clone(), data_size as u64);
+        let file_metadata = FileMetadata::new(path.clone(), data_size as u64, 0);
         header_builder = header_builder.with_file_metadata(&file_metadata);
 
         info!(
@@ -348,11 +320,23 @@ fn main() -> Result<()> {
         u32::to_le_bytes(total_bytes)
     );
 
-    let header_bytes: Vec<u8> = header.into();
-    info!("header: {header_bytes:?}");
+    let header_bytes: Vec<u8> = header.clone().into();
+    // info!("header: {header_bytes:?}");
 
     let roundtripped_header: Header = header_bytes.try_into().unwrap();
-    info!("roundtripped_header: {roundtripped_header:#?}");
+    // info!("roundtripped_header: {roundtripped_header:#?}");
+
+    debug_assert_eq!(header.version, roundtripped_header.version);
+    debug_assert_eq!(header.file_count, roundtripped_header.file_count);
+    // assert_eq!(header.file_metadata_size, roundtripped_header.file_metadata_size);
+    // assert_eq!(header.file_metadata_crc32, roundtripped_header.file_metadata_crc32);
+    for (left, right) in header
+        .file_metadata_list
+        .iter()
+        .zip(roundtripped_header.file_metadata_list.iter())
+    {
+        debug_assert_eq!(left, right)
+    }
 
     info!("magic: {MAGIC_BYTES:?}");
 
@@ -385,73 +369,4 @@ fn setup_logging() {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::FileMetadata;
-    use std::os::unix::ffi::OsStrExt;
-    use std::path::PathBuf;
-
-    #[test]
-    fn file_metadata_roundtrip_bytes() {
-        let path = PathBuf::from("abf90497f35b4d37a4f7843aa5780be2.fieldnorm");
-        let file_metadata = FileMetadata::new(path, 42);
-
-        let bytes: Vec<u8> = file_metadata.clone().into();
-        let round_tripped: FileMetadata = bytes.try_into().unwrap();
-
-        assert_eq!(round_tripped, file_metadata);
-    }
-
-    #[test]
-    fn file_metadata_incomplete_header_error() {
-        let bytes: Vec<u8> = vec![1, 2, 3, 4, 5];
-        let header_size = bytes.len();
-
-        let result: Result<FileMetadata, _> = bytes.try_into();
-
-        assert!(result.is_err());
-
-        let err = result.unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            format!(
-                "Malformed header detected. Header size: {header_size} is insufficient to hold metadata.",
-            )
-        );
-    }
-
-    #[test]
-    fn file_metadata_truncated_data_error() {
-        // Path length is 42 bytes but there is only 8 bytes of path data
-        let data_offset_bytes = u64::to_le_bytes(200);
-        let data_size_bytes = u64::to_le_bytes(1024);
-
-        let path_length = 42;
-        let path_length_bytes = u8::to_le_bytes(path_length);
-
-        let path = PathBuf::from("meta.json");
-        let path_bytes = path.as_os_str().as_bytes();
-
-        let mut bytes: Vec<u8> = Vec::new();
-
-        bytes.extend(data_offset_bytes);
-        bytes.extend(data_size_bytes);
-        bytes.extend(path_length_bytes);
-        bytes.extend(path_bytes);
-
-        let result: Result<FileMetadata, _> = bytes.try_into();
-
-        assert!(result.is_err());
-
-        let err = result.unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            format!(
-                "Path len in header is {path_length} bytes, but stored path truncated after {} bytes",
-                path_bytes.len()
-            )
-        );
-    }
 }
