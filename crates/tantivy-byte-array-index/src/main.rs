@@ -182,6 +182,15 @@ impl HeaderBuilder {
             .sum::<usize>() as u64;
         self.inner.file_metadata_size = total_metadata_size as u32; // back-fill
 
+        // The file_metadata_crc32 is deliberately not back-filled here. This is back-filled only
+        // when we serialize this Header into bytes. Computing this value requires serializing the
+        // file metadata block into bytes and then computing its crc32 hash. This is undesirable
+        // because we will immediately discard the serialized bytes. Instead, when this Header is
+        // serialized into bytes the file_metadata_crc32 can be back-filled on the fly. This keeps
+        // the code which parses bytes back into Header tangle free. The trade-off is that in a
+        // round-trip test we have to skip comparing the file_metadata_crc32 field. This purpose of
+        // this field is to check if the file metadata block survived storage.
+
         let data_block_offset = HEADER_SIZE as u64 + total_metadata_size;
 
         let mut current_offset = data_block_offset;
