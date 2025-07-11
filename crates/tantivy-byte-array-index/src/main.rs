@@ -94,8 +94,8 @@ impl FileMetadata {
     }
 }
 
-impl From<FileMetadata> for Vec<u8> {
-    fn from(value: FileMetadata) -> Self {
+impl From<&FileMetadata> for Vec<u8> {
+    fn from(value: &FileMetadata) -> Self {
         value.to_bytes(value.path.as_os_str().as_bytes())
     }
 }
@@ -173,7 +173,23 @@ impl HeaderBuilder {
         self
     }
 
-    pub fn build(self) -> Header {
+    pub fn build(mut self) -> Header {
+        let total_metadata_size: u64 = self
+            .inner
+            .file_metadata_list
+            .iter()
+            .map(|fm| FileMetadata::header_size() + fm.path.as_os_str().len())
+            .sum::<usize>() as u64;
+
+        let data_block_offset = HEADER_SIZE as u64 + total_metadata_size;
+
+        let mut current_offset = data_block_offset;
+        for file_metadata in self.inner.file_metadata_list.iter_mut() {
+            file_metadata.data_offset = current_offset; // back-fill
+
+            current_offset += file_metadata.data_size;
+        }
+
         self.inner
     }
 }
@@ -188,7 +204,7 @@ impl From<Header> for Vec<u8> {
 
         let mut file_metadata_bytes = Vec::new();
         for file_metadata in value.file_metadata_list {
-            file_metadata_bytes.extend::<Vec<u8>>(file_metadata.into());
+            file_metadata_bytes.extend::<Vec<u8>>((&file_metadata).into());
         }
 
         let file_metadata_size = file_metadata_bytes.len() as u32;
@@ -303,7 +319,7 @@ fn main() -> Result<()> {
             path.as_os_str().len()
         );
 
-        let bytes: Vec<u8> = file_metadata.into();
+        let bytes: Vec<u8> = (&file_metadata).into();
         total_bytes += bytes.len() as u32;
         file_count += 1;
         info!(
