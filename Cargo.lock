@@ -2920,6 +2920,7 @@ dependencies = [
 name = "tantivy-byte-array-index"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "env_logger",
  "log",
  "once_cell",

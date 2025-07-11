@@ -134,6 +134,76 @@ impl TryFrom<Vec<u8>> for FileMetadata {
     }
 }
 
+#[derive(Debug)]
+struct Header {
+    version: u8,
+    file_count: u32,
+    // file_metadata_size: u32,
+    // file_metadata_crc32: u32,
+    file_metadata_list: Vec<FileMetadata>,
+}
+const MAGIC_BYTES: &[u8; 4] = b"FTEP"; // Full-Text index Embedded in Parquet
+const VERSION: u8 = 1;
+
+impl Default for Header {
+    fn default() -> Self {
+        Self {
+            version: VERSION,
+            file_count: 0,
+            // file_metadata_size: 0,
+            // file_metadata_crc32: 0,
+            file_metadata_list: Vec::new(),
+        }
+    }
+}
+
+struct HeaderBuilder {
+    inner: Header,
+}
+
+impl HeaderBuilder {
+    pub fn new() -> Self {
+        Self {
+            inner: Header::default(),
+        }
+    }
+
+    pub fn with_file_metadata(mut self, file_metadata: &FileMetadata) -> HeaderBuilder {
+        self.inner.file_count += 1;
+        self.inner.file_metadata_list.push(file_metadata.clone());
+        self
+    }
+
+    pub fn build(self) -> Header {
+        self.inner
+    }
+}
+
+impl From<Header> for Vec<u8> {
+    fn from(value: Header) -> Self {
+        let mut bytes = Vec::new();
+
+        bytes.extend(MAGIC_BYTES);
+        bytes.extend(value.version.to_le_bytes());
+        bytes.extend(value.file_count.to_le_bytes());
+
+        let mut file_metadata_bytes = Vec::new();
+        for file_metadata in value.file_metadata_list {
+            file_metadata_bytes.extend::<Vec<u8>>(file_metadata.into());
+        }
+
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(file_metadata_bytes.as_slice());
+        let file_metadata_crc32 = hasher.finalize();
+
+        bytes.extend(file_metadata_bytes.len().to_le_bytes());
+        bytes.extend(file_metadata_crc32.to_le_bytes());
+        bytes.extend(file_metadata_bytes);
+
+        bytes
+    }
+}
+
 fn main() -> Result<()> {
     setup_logging();
 
@@ -154,6 +224,10 @@ fn main() -> Result<()> {
     let metadata_file = PathBuf::from("meta.json");
     let dir = index.directory();
 
+    let mut file_count: u32 = 0;
+    let mut total_bytes: u32 = 0;
+
+    let mut header_builder = HeaderBuilder::new();
     for path in dir.list_managed_files() {
         let data_size = if path.eq(&metadata_file) {
             let contents = dir
@@ -170,6 +244,7 @@ fn main() -> Result<()> {
         };
 
         let file_metadata = FileMetadata::new(path.clone(), data_size as u64);
+        header_builder = header_builder.with_file_metadata(&file_metadata);
 
         info!(
             "Path size={0}, size in bytes={data_size}, path={path:?}",
@@ -177,8 +252,24 @@ fn main() -> Result<()> {
         );
 
         let bytes: Vec<u8> = file_metadata.into();
-        info!("bytes: {bytes:?}");
+        total_bytes += bytes.len() as u32;
+        file_count += 1;
+        info!(
+            "file count:{file_count} current total bytes: {total_bytes} in encoded form {:?}",
+            u32::to_le_bytes(total_bytes)
+        );
     }
+
+    let header = header_builder.build();
+
+    info!(
+        "file count: {file_count} ({:?}) Total bytes: {total_bytes} in encoded form {:?}",
+        u32::to_le_bytes(file_count),
+        u32::to_le_bytes(total_bytes)
+    );
+
+    info!("header: {:?}", Into::<Vec<u8>>::into(header));
+    info!("magic: {MAGIC_BYTES:?}");
 
     let query_session = QuerySession::new(&index)?;
     let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
