@@ -49,14 +49,12 @@ struct FileMetadata {
 }
 
 impl FileMetadata {
-    const DATA_OFFSET_BYTES: u64 = 8;
-    const DATA_SIZE_BYTES: u64 = 8;
+    const DATA_OFFSET_BYTES: u8 = 8;
+    const DATA_SIZE_BYTES: u8 = 8;
     const PATH_LEN_BYTES: u8 = 1;
 
     const fn header_size() -> usize {
-        Self::DATA_OFFSET_BYTES as usize
-            + Self::DATA_SIZE_BYTES as usize
-            + Self::PATH_LEN_BYTES as usize
+        (Self::DATA_OFFSET_BYTES + Self::DATA_SIZE_BYTES + Self::PATH_LEN_BYTES) as usize
     }
 
     pub fn new(path: PathBuf, data_size: u64) -> Self {
@@ -208,7 +206,7 @@ pub enum HeaderError {}
 impl TryFrom<Vec<u8>> for HeaderBuilder {
     type Error = HeaderError;
 
-    fn try_from(value: Vec<u8>) -> std::result::Result<Self, Self::Error> {
+    fn try_from(_value: Vec<u8>) -> std::result::Result<Self, Self::Error> {
         todo!()
     }
 }
