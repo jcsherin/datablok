@@ -7,10 +7,10 @@ applications of the Rust database building blocks (Apache DataFusion, Arrow
 
 ## Highlights
 
-* [parquet-parallel-nested](./crates/parquet-parallel-nested/README.md) -
+* [parquet-parallel-nested](./crates/parquet-parallel-nested) -
   Writing 1 billion nested records to Parquet with a per-core throughput of ~1.3
   million records per second, using a multi-stage parallel pipeline.
-* [tantivy-byte-array-index](./crates/tantivy-byte-array-index/README.md) -
+* [tantivy-byte-array-index](./crates/tantivy-byte-array-index) -
   Embedding arbitrary data in Parquet and exploiting it to improve
   DataFusion query performance. In this instance we embed a Tantivy
   full-text index to accelerate `LIKE` queries.
