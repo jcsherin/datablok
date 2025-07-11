@@ -138,8 +138,8 @@ impl TryFrom<Vec<u8>> for FileMetadata {
 struct Header {
     version: u8,
     file_count: u32,
-    // file_metadata_size: u32,
-    // file_metadata_crc32: u32,
+    _file_metadata_size: u32,
+    _file_metadata_crc32: u32,
     file_metadata_list: Vec<FileMetadata>,
 }
 const MAGIC_BYTES: &[u8; 4] = b"FTEP"; // Full-Text index Embedded in Parquet
@@ -150,8 +150,8 @@ impl Default for Header {
         Self {
             version: VERSION,
             file_count: 0,
-            // file_metadata_size: 0,
-            // file_metadata_crc32: 0,
+            _file_metadata_size: 0,
+            _file_metadata_crc32: 0,
             file_metadata_list: Vec::new(),
         }
     }
@@ -199,6 +199,17 @@ impl From<Header> for Vec<u8> {
         bytes.extend(file_metadata_bytes);
 
         bytes
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum HeaderError {}
+
+impl TryFrom<Vec<u8>> for HeaderBuilder {
+    type Error = HeaderError;
+
+    fn try_from(value: Vec<u8>) -> std::result::Result<Self, Self::Error> {
+        todo!()
     }
 }
 
