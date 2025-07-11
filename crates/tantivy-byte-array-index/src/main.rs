@@ -192,9 +192,7 @@ impl From<Header> for Vec<u8> {
             file_metadata_bytes.extend::<Vec<u8>>(file_metadata.into());
         }
 
-        let mut hasher = crc32fast::Hasher::new();
-        hasher.update(file_metadata_bytes.as_slice());
-        let file_metadata_crc32 = hasher.finalize();
+        let file_metadata_crc32 = crc32fast::hash(file_metadata_bytes.as_slice());
 
         bytes.extend(file_metadata_bytes.len().to_le_bytes());
         bytes.extend(file_metadata_crc32.to_le_bytes());
