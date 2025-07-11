@@ -180,6 +180,7 @@ impl HeaderBuilder {
             .iter()
             .map(|fm| FileMetadata::header_size() + fm.path.as_os_str().len())
             .sum::<usize>() as u64;
+        self.inner.file_metadata_size = total_metadata_size as u32; // back-fill
 
         let data_block_offset = HEADER_SIZE as u64 + total_metadata_size;
 
@@ -340,11 +341,14 @@ fn main() -> Result<()> {
     // info!("header: {header_bytes:?}");
 
     let roundtripped_header: Header = header_bytes.try_into().unwrap();
-    // info!("roundtripped_header: {roundtripped_header:#?}");
+    info!("roundtripped_header: {roundtripped_header:#?}");
 
     debug_assert_eq!(header.version, roundtripped_header.version);
     debug_assert_eq!(header.file_count, roundtripped_header.file_count);
-    // assert_eq!(header.file_metadata_size, roundtripped_header.file_metadata_size);
+    assert_eq!(
+        header.file_metadata_size,
+        roundtripped_header.file_metadata_size
+    );
     // assert_eq!(header.file_metadata_crc32, roundtripped_header.file_metadata_crc32);
     for (left, right) in header
         .file_metadata_list
