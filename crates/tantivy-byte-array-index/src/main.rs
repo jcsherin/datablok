@@ -17,6 +17,7 @@ use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use tantivy::collector::{Count, DocSetCollector};
+use tantivy::directory::ManagedDirectory;
 use tantivy::{Directory, HasLen};
 use thiserror::Error;
 
@@ -282,6 +283,63 @@ impl TryFrom<Vec<u8>> for Header {
     }
 }
 
+struct DataBlockBuilder<'a> {
+    dir: &'a ManagedDirectory,
+    data: Vec<u8>,
+}
+
+impl<'a> DataBlockBuilder<'a> {
+    fn new(dir: &'a ManagedDirectory) -> Self {
+        Self {
+            dir,
+            data: Vec::new(),
+        }
+    }
+
+    fn with_file_metadata_list(mut self, file_metadata: &[FileMetadata]) -> Self {
+        let metadata_file = PathBuf::from("meta.json");
+
+        for file_metadata in file_metadata {
+            if file_metadata.path.eq(&metadata_file) {
+                let contents = self
+                    .dir
+                    .atomic_read(&file_metadata.path)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Error: {e} while reading metadata file: {:?}",
+                            file_metadata.path
+                        )
+                    });
+
+                self.data.extend(contents)
+            } else {
+                let file_slice = self.dir.open_read(&file_metadata.path).unwrap_or_else(|e| {
+                    panic!("Error: {e} while opening file: {:?}", file_metadata.path)
+                });
+
+                for chunk in file_slice.stream_file_chunks() {
+                    self.data.extend(
+                        chunk
+                            .unwrap_or_else(|e| {
+                                panic!(
+                                    "Error: {e} while streaming file chunk from file: {:?}",
+                                    file_metadata.path
+                                )
+                            })
+                            .as_slice(),
+                    );
+                }
+            };
+        }
+
+        self
+    }
+
+    fn build(self) -> Vec<u8> {
+        self.data
+    }
+}
+
 fn main() -> Result<()> {
     setup_logging();
 
@@ -304,6 +362,7 @@ fn main() -> Result<()> {
 
     let mut file_count: u32 = 0;
     let mut total_bytes: u32 = 0;
+    let mut total_data_size: u64 = 0;
 
     let mut header_builder = HeaderBuilder::new();
     for path in dir.list_managed_files() {
@@ -320,6 +379,8 @@ fn main() -> Result<()> {
 
             file_slice.len()
         };
+
+        total_data_size += data_size as u64;
 
         let file_metadata = FileMetadata::new(path.clone(), data_size as u64, 0);
         header_builder = header_builder.with_file_metadata(&file_metadata);
@@ -348,6 +409,13 @@ fn main() -> Result<()> {
 
     let header_bytes: Vec<u8> = header.clone().into();
     // info!("header: {header_bytes:?}");
+
+    let data_block = DataBlockBuilder::new(dir)
+        .with_file_metadata_list(header.file_metadata_list.as_slice())
+        .build();
+    // info!("data block: {data_block:?}");
+    info!("Total data block size: {}", data_block.len());
+    info!("Source data size: {total_data_size}");
 
     let roundtripped_header: Header = header_bytes.try_into().unwrap();
     info!("roundtripped_header: {roundtripped_header:#?}");
