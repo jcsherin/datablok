@@ -13,11 +13,14 @@ use crate::query_session::QuerySession;
 use log::info;
 use query::boolean_query;
 use std::ffi::OsStr;
+use std::fmt::Debug;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 use tantivy::collector::{Count, DocSetCollector};
-use tantivy::directory::ManagedDirectory;
+use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
+use tantivy::directory::{FileHandle, ManagedDirectory, WatchCallback, WatchHandle, WritePtr};
 use tantivy::{Directory, HasLen};
 use thiserror::Error;
 
@@ -353,6 +356,75 @@ impl<'a> DataBlockBuilder<'a> {
 
     fn build(self) -> Vec<u8> {
         self.data
+    }
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct InnerDirectory {
+    header: Header,
+    data: Vec<u8>,
+}
+
+impl InnerDirectory {
+    #[allow(dead_code)]
+    fn new(header: Header, data_block: &[u8]) -> Self {
+        Self {
+            header,
+            data: data_block.to_vec(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct ReadOnlyArchiveDirectory {
+    inner: Arc<RwLock<InnerDirectory>>,
+}
+
+impl ReadOnlyArchiveDirectory {
+    #[allow(dead_code)]
+    fn new(header: Header, data_block: &[u8]) -> Result<Self> {
+        Ok(Self {
+            inner: Arc::new(RwLock::new(InnerDirectory::new(header, data_block))),
+        })
+    }
+}
+
+impl Directory for ReadOnlyArchiveDirectory {
+    fn get_file_handle(
+        &self,
+        _path: &Path,
+    ) -> std::result::Result<Arc<dyn FileHandle>, OpenReadError> {
+        todo!()
+    }
+
+    fn delete(&self, _path: &Path) -> std::result::Result<(), DeleteError> {
+        todo!()
+    }
+
+    fn exists(&self, _path: &Path) -> std::result::Result<bool, OpenReadError> {
+        todo!()
+    }
+
+    fn open_write(&self, _path: &Path) -> std::result::Result<WritePtr, OpenWriteError> {
+        todo!()
+    }
+
+    fn atomic_read(&self, _path: &Path) -> std::result::Result<Vec<u8>, OpenReadError> {
+        todo!()
+    }
+
+    fn atomic_write(&self, _path: &Path, _data: &[u8]) -> std::io::Result<()> {
+        todo!()
+    }
+
+    fn sync_directory(&self) -> std::io::Result<()> {
+        todo!()
+    }
+
+    fn watch(&self, _watch_callback: WatchCallback) -> tantivy::Result<WatchHandle> {
+        todo!()
     }
 }
 
