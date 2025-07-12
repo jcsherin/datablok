@@ -18,10 +18,13 @@ use std::fmt::Debug;
 use std::io::{Error, ErrorKind, Read};
 use std::ops::{Deref, Range};
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 use tantivy::collector::{Count, DocSetCollector};
-use tantivy::directory::{FileHandle, ManagedDirectory, OwnedBytes};
+use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
+use tantivy::directory::{
+    FileHandle, FileSlice, ManagedDirectory, OwnedBytes, WatchCallback, WatchHandle, WritePtr,
+};
 use tantivy::{Directory, HasLen};
 use thiserror::Error;
 
@@ -408,40 +411,48 @@ impl<'a> DataBlockBuilder<'a> {
         self
     }
 
-    fn build(self) -> Vec<u8> {
-        self.data
+    fn build(self) -> DataBlock {
+        DataBlock::new(self.data)
     }
 }
 
-#[derive(Debug)]
 #[allow(dead_code)]
+#[derive(Debug)]
 struct InnerDirectory {
-    header: Header,
-    data: Vec<u8>,
+    file_map: std::collections::HashMap<PathBuf, DataBlock>,
 }
 
 impl InnerDirectory {
     #[allow(dead_code)]
-    fn new(header: Header, data_block: &[u8]) -> Self {
-        Self {
-            header,
-            data: data_block.to_vec(),
+    fn new(header: Header, data_block: DataBlock) -> Arc<RwLock<InnerDirectory>> {
+        let mut fs = std::collections::HashMap::new();
+
+        let data_block_start = HEADER_SIZE + header.file_metadata_size as usize;
+        for file_metadata in header.file_metadata_list.iter() {
+            let offset = file_metadata.data_offset as usize - data_block_start;
+
+            let range = offset..offset + file_metadata.data_size as usize;
+            let sub_data_block = data_block.slice_from(range); // zero-copy slice
+
+            fs.insert(file_metadata.path.clone(), sub_data_block);
         }
+
+        Arc::new(RwLock::new(Self { file_map: fs }))
     }
 }
 
-#[derive(Debug, Clone)]
 #[allow(dead_code)]
+#[derive(Debug, Clone)]
 struct ReadOnlyArchiveDirectory {
     inner: Arc<RwLock<InnerDirectory>>,
 }
 
 impl ReadOnlyArchiveDirectory {
     #[allow(dead_code)]
-    fn new(header: Header, data_block: &[u8]) -> Result<Self> {
-        Ok(Self {
-            inner: Arc::new(RwLock::new(InnerDirectory::new(header, data_block))),
-        })
+    fn new(header: Header, data: DataBlock) -> ReadOnlyArchiveDirectory {
+        Self {
+            inner: InnerDirectory::new(header, data),
+        }
     }
 }
 
@@ -453,6 +464,9 @@ impl Directory for ReadOnlyArchiveDirectory {
         todo!()
     }
 
+    fn open_read(&self, _path: &Path) -> std::result::Result<FileSlice, OpenReadError> {
+        todo!()
+    }
     fn delete(&self, _path: &Path) -> std::result::Result<(), DeleteError> {
         todo!()
     }
