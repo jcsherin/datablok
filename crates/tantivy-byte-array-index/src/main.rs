@@ -23,7 +23,7 @@ use std::sync::{Arc, RwLock};
 use tantivy::collector::{Count, DocSetCollector};
 use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
 use tantivy::directory::{
-    FileHandle, FileSlice, ManagedDirectory, OwnedBytes, WatchCallback, WatchHandle, WritePtr,
+    FileHandle, ManagedDirectory, OwnedBytes, WatchCallback, WatchHandle, WritePtr,
 };
 use tantivy::{Directory, HasLen};
 use thiserror::Error;
@@ -439,6 +439,21 @@ impl InnerDirectory {
 
         Arc::new(RwLock::new(Self { file_map: fs }))
     }
+
+    fn get_file_handle(
+        &self,
+        path: &Path,
+    ) -> std::result::Result<Arc<dyn FileHandle>, OpenReadError> {
+        self.file_map
+            .get(path)
+            .ok_or_else(|| OpenReadError::FileDoesNotExist(path.to_owned()))
+            .cloned()
+            .map(|data_block| Arc::new(data_block) as Arc<dyn FileHandle>)
+    }
+
+    fn exists(&self, path: &Path) -> std::result::Result<bool, OpenReadError> {
+        Ok(self.file_map.contains_key(path))
+    }
 }
 
 #[allow(dead_code)]
@@ -459,28 +474,32 @@ impl ReadOnlyArchiveDirectory {
 impl Directory for ReadOnlyArchiveDirectory {
     fn get_file_handle(
         &self,
-        _path: &Path,
+        path: &Path,
     ) -> std::result::Result<Arc<dyn FileHandle>, OpenReadError> {
-        todo!()
+        self.inner.read().unwrap().get_file_handle(path)
     }
 
-    fn open_read(&self, _path: &Path) -> std::result::Result<FileSlice, OpenReadError> {
-        todo!()
-    }
     fn delete(&self, _path: &Path) -> std::result::Result<(), DeleteError> {
         todo!()
     }
 
-    fn exists(&self, _path: &Path) -> std::result::Result<bool, OpenReadError> {
-        todo!()
+    fn exists(&self, path: &Path) -> std::result::Result<bool, OpenReadError> {
+        self.inner.read().unwrap().exists(path)
     }
 
     fn open_write(&self, _path: &Path) -> std::result::Result<WritePtr, OpenWriteError> {
         todo!()
     }
 
-    fn atomic_read(&self, _path: &Path) -> std::result::Result<Vec<u8>, OpenReadError> {
-        todo!()
+    fn atomic_read(&self, path: &Path) -> std::result::Result<Vec<u8>, OpenReadError> {
+        let bytes =
+            self.open_read(path)?
+                .read_bytes()
+                .map_err(|io_error| OpenReadError::IoError {
+                    io_error: Arc::new(io_error),
+                    filepath: path.to_path_buf(),
+                })?;
+        Ok(bytes.as_slice().to_owned())
     }
 
     fn atomic_write(&self, _path: &Path, _data: &[u8]) -> std::io::Result<()> {
