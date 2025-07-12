@@ -105,6 +105,7 @@ impl From<&FileMetadata> for Vec<u8> {
 struct Header {
     version: u8,
     file_count: u32,
+    total_data_block_size: u64,
     file_metadata_size: u32,
     file_metadata_crc32: u32,
     file_metadata_list: Vec<FileMetadata>,
@@ -117,6 +118,7 @@ impl Default for Header {
         Self {
             version: VERSION,
             file_count: 0,
+            total_data_block_size: 0,
             file_metadata_size: 0,
             file_metadata_crc32: 0,
             file_metadata_list: Vec::new(),
@@ -128,6 +130,7 @@ impl Header {
     const MAGIC_BYTES_LEN: u8 = 4;
     const VERSION_LEN: u8 = 1;
     const FILE_COUNT_LEN: u8 = 4;
+    const TOTAL_DATA_BLOCK_SIZE_LEN: u8 = 8;
     const FILE_METADATA_SIZE_LEN: u8 = 4;
     const FILE_METADATA_CRC32_LEN: u8 = 4;
 
@@ -135,6 +138,7 @@ impl Header {
         (Self::MAGIC_BYTES_LEN
             + Self::VERSION_LEN
             + Self::FILE_COUNT_LEN
+            + Self::TOTAL_DATA_BLOCK_SIZE_LEN
             + Self::FILE_METADATA_SIZE_LEN
             + Self::FILE_METADATA_CRC32_LEN) as usize
     }
@@ -155,6 +159,7 @@ impl HeaderBuilder {
 
     pub fn with_file_metadata(mut self, file_metadata: &FileMetadata) -> HeaderBuilder {
         self.inner.file_count += 1;
+        self.inner.total_data_block_size += file_metadata.data_size;
         self.inner.file_metadata_list.push(file_metadata.clone());
         self
     }
@@ -212,6 +217,7 @@ impl From<Header> for Vec<u8> {
         bytes.extend(MAGIC_BYTES);
         bytes.push(VERSION);
         bytes.extend(value.file_count.to_le_bytes());
+        bytes.extend(value.total_data_block_size.to_le_bytes());
 
         let mut file_metadata_bytes = Vec::new();
         for file_metadata in value.file_metadata_list {
@@ -256,6 +262,10 @@ impl TryFrom<Vec<u8>> for Header {
         cursor.read_exact(&mut file_count_buffer)?;
         let file_count = u32::from_le_bytes(file_count_buffer);
 
+        let mut total_data_block_size_buffer = [0u8; 8];
+        cursor.read_exact(&mut total_data_block_size_buffer)?;
+        let total_data_block_size = u64::from_le_bytes(total_data_block_size_buffer); // used for assertion
+
         let mut file_metadata_size_buffer = [0u8; 4];
         cursor.read_exact(&mut file_metadata_size_buffer)?;
         let file_metadata_size = u32::from_le_bytes(file_metadata_size_buffer);
@@ -279,7 +289,13 @@ impl TryFrom<Vec<u8>> for Header {
             header_builder = header_builder.with_file_metadata(&file_metadata);
         }
 
-        Ok(header_builder.build())
+        let header = header_builder.build();
+
+        // Verify that the total_data_block_size read from bytes matches the value derived from
+        // FileMetadata entries.
+        debug_assert_eq!(total_data_block_size, header.total_data_block_size);
+
+        Ok(header)
     }
 }
 
