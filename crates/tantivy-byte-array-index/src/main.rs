@@ -12,15 +12,16 @@ use crate::index::IndexBuilder;
 use crate::query_session::QuerySession;
 use log::info;
 use query::boolean_query;
+use stable_deref_trait::StableDeref;
 use std::ffi::OsStr;
 use std::fmt::Debug;
-use std::io::Read;
+use std::io::{Error, ErrorKind, Read};
+use std::ops::{Deref, Range};
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::path::PathBuf;
+use std::sync::Arc;
 use tantivy::collector::{Count, DocSetCollector};
-use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
-use tantivy::directory::{FileHandle, ManagedDirectory, WatchCallback, WatchHandle, WritePtr};
+use tantivy::directory::{FileHandle, ManagedDirectory, OwnedBytes};
 use tantivy::{Directory, HasLen};
 use thiserror::Error;
 
@@ -299,6 +300,59 @@ impl TryFrom<Vec<u8>> for Header {
         debug_assert_eq!(total_data_block_size, header.total_data_block_size);
 
         Ok(header)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DataBlock {
+    data: Arc<[u8]>,
+    range: Range<usize>,
+}
+
+impl DataBlock {
+    fn new(data: Vec<u8>) -> Self {
+        let range = 0..data.len();
+        Self {
+            data: Arc::from(data),
+            range,
+        }
+    }
+
+    fn slice_from(&self, range: Range<usize>) -> DataBlock {
+        let new_start = self.range.start + range.start;
+        let new_end = self.range.start + range.end;
+
+        assert!(range.end <= self.range.len(), "Range out of bounds");
+
+        Self {
+            data: self.data.clone(),
+            range: new_start..new_end,
+        }
+    }
+}
+
+impl Deref for DataBlock {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.data[self.range.clone()]
+    }
+}
+
+unsafe impl StableDeref for DataBlock {}
+
+impl FileHandle for DataBlock {
+    fn read_bytes(&self, range: Range<usize>) -> std::io::Result<OwnedBytes> {
+        if range.end > self.range.len() {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Input range out of bounds",
+            ));
+        }
+
+        let slice = self.slice_from(range);
+
+        Ok(OwnedBytes::new(slice))
     }
 }
 

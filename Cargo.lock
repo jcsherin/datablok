@@ -2924,6 +2924,7 @@ dependencies = [
  "env_logger",
  "log",
  "once_cell",
+ "stable_deref_trait",
  "tantivy",
  "thiserror",
 ]
