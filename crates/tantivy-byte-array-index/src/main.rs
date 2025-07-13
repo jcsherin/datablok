@@ -10,8 +10,10 @@ use crate::doc::{DocIdMapper, DocMapper, DocSchema, examples};
 use crate::error::Result;
 use crate::index::IndexBuilder;
 use crate::query_session::QuerySession;
+use crc32fast::Hasher;
 use log::info;
 use query::boolean_query;
+use serde::{Deserialize, Serialize};
 use stable_deref_trait::StableDeref;
 use std::ffi::OsStr;
 use std::fmt::Debug;
@@ -25,7 +27,7 @@ use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
 use tantivy::directory::{
     FileHandle, ManagedDirectory, OwnedBytes, WatchCallback, WatchHandle, WritePtr,
 };
-use tantivy::{Directory, HasLen};
+use tantivy::{Directory, HasLen, INDEX_FORMAT_VERSION};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -41,8 +43,10 @@ enum IndexFormatError {
 struct FileMetadata {
     /// Offset in data section from where the file contents start
     data_offset: u64,
-    /// Length of the file contents slice stored in data section in bytes
-    data_size: u64,
+    /// Logical length of index file with the footer removed
+    data_content_len: u64,
+    /// Length of the byte serialized footer
+    data_footer_len: u8,
     /// Length of the file path in bytes
     path_len: u8,
     /// File path
@@ -51,11 +55,15 @@ struct FileMetadata {
 
 impl FileMetadata {
     const DATA_OFFSET_BYTES: u8 = 8;
-    const DATA_SIZE_BYTES: u8 = 8;
+    const DATA_CONTENT_LEN_BYTES: u8 = 8;
+    const DATA_FOOTER_LEN_BYTES: u8 = 1;
     const PATH_LEN_BYTES: u8 = 1;
 
     const fn header_size() -> usize {
-        (Self::DATA_OFFSET_BYTES + Self::DATA_SIZE_BYTES + Self::PATH_LEN_BYTES) as usize
+        (Self::DATA_OFFSET_BYTES
+            + Self::DATA_CONTENT_LEN_BYTES
+            + Self::DATA_FOOTER_LEN_BYTES
+            + Self::PATH_LEN_BYTES) as usize
     }
 
     pub fn new(path: PathBuf, data_size: u64, data_offset: u64) -> Self {
@@ -65,7 +73,8 @@ impl FileMetadata {
             path,
             path_len,
             data_offset,
-            data_size,
+            data_content_len: data_size,
+            data_footer_len: 0,
         }
     }
 
@@ -73,7 +82,7 @@ impl FileMetadata {
         let mut bytes = Vec::with_capacity(Self::header_size() + path.len());
 
         bytes.extend(self.data_offset.to_le_bytes());
-        bytes.extend(self.data_size.to_le_bytes());
+        bytes.extend(self.data_content_len.to_le_bytes());
         bytes.extend(self.path_len.to_le_bytes());
         bytes.extend(path);
 
@@ -166,7 +175,7 @@ impl HeaderBuilder {
 
     pub fn with_file_metadata(mut self, file_metadata: &FileMetadata) -> HeaderBuilder {
         self.inner.file_count += 1;
-        self.inner.total_data_block_size += file_metadata.data_size;
+        self.inner.total_data_block_size += file_metadata.data_content_len;
         self.inner.file_metadata_list.push(file_metadata.clone());
         self
     }
@@ -210,7 +219,7 @@ impl HeaderBuilder {
         for file_metadata in self.inner.file_metadata_list.iter_mut() {
             file_metadata.data_offset = current_offset; // back-fill
 
-            current_offset += file_metadata.data_size;
+            current_offset += file_metadata.data_content_len;
         }
 
         self.inner
@@ -359,6 +368,52 @@ impl FileHandle for DataBlock {
     }
 }
 
+const TANTIVY_FOOTER_MAGIC_NUMBER: u32 = 1337;
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct TantivyVersion {
+    major: u32,
+    minor: u32,
+    patch: u32,
+    index_format_version: u32,
+}
+
+impl Default for TantivyVersion {
+    fn default() -> Self {
+        Self {
+            major: 0,
+            minor: 24,
+            patch: 1,
+            index_format_version: INDEX_FORMAT_VERSION,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct TantivyFooterHack {
+    version: TantivyVersion,
+    crc: u32,
+}
+
+impl TantivyFooterHack {
+    fn new(crc: u32) -> Self {
+        Self {
+            version: TantivyVersion::default(),
+            crc,
+        }
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut payload = serde_json::to_string(&self)?.into_bytes();
+        let payload_len = u32::to_le_bytes(payload.len() as u32);
+        let footer_magic = u32::to_le_bytes(TANTIVY_FOOTER_MAGIC_NUMBER);
+
+        payload.extend_from_slice(&payload_len);
+        payload.extend_from_slice(&footer_magic);
+
+        Ok(payload)
+    }
+}
+
 struct DataBlockBuilder<'a> {
     dir: &'a ManagedDirectory,
     data: Vec<u8>,
@@ -387,24 +442,36 @@ impl<'a> DataBlockBuilder<'a> {
                         )
                     });
 
+                let crc = crc32fast::hash(&contents);
+                let footer = TantivyFooterHack::new(crc);
+                info!("path: {}, footer: {footer:?}", file_metadata.path.display());
+                let footer_bytes = footer.to_bytes().unwrap();
+                info!("footer {} bytes: {footer_bytes:?}", footer_bytes.len());
+
                 self.data.extend(contents)
             } else {
                 let file_slice = self.dir.open_read(&file_metadata.path).unwrap_or_else(|e| {
                     panic!("Error: {e} while opening file: {:?}", file_metadata.path)
                 });
 
+                let mut crc_hasher = Hasher::new();
                 for chunk in file_slice.stream_file_chunks() {
-                    self.data.extend(
-                        chunk
-                            .unwrap_or_else(|e| {
-                                panic!(
-                                    "Error: {e} while streaming file chunk from file: {:?}",
-                                    file_metadata.path
-                                )
-                            })
-                            .as_slice(),
-                    );
+                    let owned_bytes = chunk.unwrap_or_else(|e| {
+                        panic!(
+                            "Error: {e} while streaming file chunk from file: {:?}",
+                            file_metadata.path
+                        )
+                    });
+
+                    crc_hasher.update(owned_bytes.as_slice());
+                    self.data.extend(owned_bytes.as_slice());
                 }
+
+                let crc = crc_hasher.finalize();
+                let footer = TantivyFooterHack::new(crc);
+                info!("path: {}, footer: {footer:?}", file_metadata.path.display());
+                let footer_bytes = footer.to_bytes().unwrap();
+                info!("footer {} bytes: {footer_bytes:?}", footer_bytes.len());
             };
         }
 
@@ -431,7 +498,7 @@ impl InnerDirectory {
         for file_metadata in header.file_metadata_list.iter() {
             let offset = file_metadata.data_offset as usize - data_block_start;
 
-            let range = offset..offset + file_metadata.data_size as usize;
+            let range = offset..offset + file_metadata.data_content_len as usize;
             let sub_data_block = data_block.slice_from(range); // zero-copy slice
 
             fs.insert(file_metadata.path.clone(), sub_data_block);

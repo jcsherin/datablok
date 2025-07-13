@@ -2924,6 +2924,8 @@ dependencies = [
  "env_logger",
  "log",
  "once_cell",
+ "serde",
+ "serde_json",
  "stable_deref_trait",
  "tantivy",
  "thiserror",
