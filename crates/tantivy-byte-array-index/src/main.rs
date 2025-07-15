@@ -18,15 +18,18 @@ use serde::{Deserialize, Serialize};
 use stable_deref_trait::StableDeref;
 use std::ffi::OsStr;
 use std::fmt::{Debug, Formatter};
-use std::io::{Error, ErrorKind, Read};
+use std::io::{BufWriter, Error, ErrorKind, Read, Write};
 use std::ops::{Deref, Range};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use tantivy::collector::{Count, DocSetCollector};
 use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
-use tantivy::directory::{FileHandle, FileSlice, OwnedBytes, WatchCallback, WatchHandle, WritePtr};
-use tantivy::{Directory, HasLen, INDEX_FORMAT_VERSION};
+use tantivy::directory::{
+    AntiCallToken, FileHandle, FileSlice, OwnedBytes, TerminatingWrite, WatchCallback, WatchHandle,
+    WritePtr,
+};
+use tantivy::{Directory, HasLen, INDEX_FORMAT_VERSION, Index};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 struct FileMetadata {
@@ -445,15 +448,25 @@ impl Directory for ReadOnlyArchiveDirectory {
     }
 
     fn delete(&self, _path: &Path) -> std::result::Result<(), DeleteError> {
-        todo!()
+        Ok(()) // no-op
     }
 
     fn exists(&self, path: &Path) -> std::result::Result<bool, OpenReadError> {
         self.inner.read().unwrap().exists(path)
     }
 
-    fn open_write(&self, _path: &Path) -> std::result::Result<WritePtr, OpenWriteError> {
-        todo!()
+    fn open_write(&self, path: &Path) -> std::result::Result<WritePtr, OpenWriteError> {
+        if path
+            .file_name()
+            .is_some_and(|name| name == ".tantivy-meta.lock")
+        {
+            Ok(BufWriter::new(Box::new(NoopWriter)))
+        } else {
+            panic!(
+                "Attempted to write to a read-only directory for path: {:?}",
+                path.display()
+            );
+        }
     }
 
     fn atomic_read(&self, path: &Path) -> std::result::Result<Vec<u8>, OpenReadError> {
@@ -476,33 +489,30 @@ impl Directory for ReadOnlyArchiveDirectory {
     }
 
     fn watch(&self, _watch_callback: WatchCallback) -> tantivy::Result<WatchHandle> {
-        todo!()
+        Ok(WatchHandle::empty())
     }
 }
 
-const TANTIVY_METADATA_PATH: &str = "meta.json";
-fn main() -> Result<()> {
-    setup_logging();
+struct NoopWriter;
 
-    let config = Config::default();
-    let schema = DocSchema::new(&config).into_schema();
-    let original_docs = examples();
+impl Drop for NoopWriter {
+    fn drop(&mut self) {}
+}
+impl Write for NoopWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Ok(buf.len()) // report that all the bytes were written successfully
+    }
 
-    let fields = SchemaFields::new(&schema, &config)?;
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(()) // yay!
+    }
+}
 
-    let index = IndexBuilder::new(schema)
-        .index_and_commit(
-            config.index_writer_memory_budget_in_bytes,
-            &fields,
-            original_docs,
-        )?
-        .build();
-
-    let metadata_path: PathBuf = PathBuf::from(TANTIVY_METADATA_PATH);
-    let dir = index.directory();
-
-    let query_session = QuerySession::new(&index)?;
-    let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
+impl TerminatingWrite for NoopWriter {
+    fn terminate_ref(&mut self, _: AntiCallToken) -> std::io::Result<()> {
+        self.flush()
+    }
+}
 
     let query = boolean_query::title_contains_diary_and_not_girl(&query_session.schema())?;
 
