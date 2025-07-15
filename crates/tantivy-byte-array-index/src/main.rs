@@ -144,22 +144,6 @@ impl Default for Header {
 }
 
 impl Header {
-    const MAGIC_BYTES_LEN: u8 = 4;
-    const VERSION_LEN: u8 = 1;
-    const FILE_COUNT_LEN: u8 = 4;
-    const TOTAL_DATA_BLOCK_SIZE_LEN: u8 = 8;
-    const FILE_METADATA_SIZE_LEN: u8 = 4;
-    const FILE_METADATA_CRC32_LEN: u8 = 4;
-
-    const fn header_size() -> usize {
-        (Self::MAGIC_BYTES_LEN
-            + Self::VERSION_LEN
-            + Self::FILE_COUNT_LEN
-            + Self::TOTAL_DATA_BLOCK_SIZE_LEN
-            + Self::FILE_METADATA_SIZE_LEN
-            + Self::FILE_METADATA_CRC32_LEN) as usize
-    }
-
     fn set_file_count(mut self, count: u32) -> Self {
         self.file_count = count;
         self
@@ -190,8 +174,6 @@ impl Header {
         self
     }
 }
-
-const HEADER_SIZE: usize = Header::header_size();
 
 impl From<Header> for Vec<u8> {
     fn from(value: Header) -> Self {
@@ -668,10 +650,10 @@ fn main() -> Result<()> {
         roundtrip_header.file_metadata_size,
         roundtrip_header.file_metadata_crc32
     );
-    info!("[Header] Round trip header:{:#?}", roundtrip_header);
+    info!("[Header] Round trip header:{roundtrip_header:#?}");
 
     let archive_dir = ReadOnlyArchiveDirectory::new(roundtrip_header, data_block);
-    info!("Read-only Archive Directory:{:?}", archive_dir);
+    info!("Read-only Archive Directory:{archive_dir:?}");
 
     Ok(())
 }
