@@ -17,7 +17,7 @@ use query::boolean_query;
 use serde::{Deserialize, Serialize};
 use stable_deref_trait::StableDeref;
 use std::ffi::OsStr;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 use std::io::{Error, ErrorKind, Read};
 use std::ops::{Deref, Range};
 use std::os::unix::ffi::OsStrExt;
@@ -257,10 +257,32 @@ impl TryFrom<Vec<u8>> for Header {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct DataBlock {
     data: Arc<[u8]>,
     range: Range<usize>,
+}
+
+impl Debug for DataBlock {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut debug_struct = f.debug_struct("DataBlock");
+
+        let display_limit = 10; // no. of bytes to display
+
+        debug_struct.field("range", &self.range);
+
+        if self.data.len() < display_limit {
+            debug_struct.field("data", &self.data);
+        } else {
+            let head = &self.data[0..display_limit];
+            let tail = &self.data[self.data.len() - display_limit..];
+
+            debug_struct.field("data_head", &head);
+            debug_struct.field("data_tail", &tail);
+        }
+
+        debug_struct.finish()
+    }
 }
 
 impl DataBlock {
