@@ -602,6 +602,27 @@ fn main() -> Result<()> {
     let metadata_file = PathBuf::from("meta.json");
     let dir = index.directory();
 
+    let query_session = QuerySession::new(&index)?;
+    let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
+
+    let query = boolean_query::title_contains_diary_and_not_girl(&query_session.schema())?;
+
+    info!("Matches count: {}", query_session.search(&query, &Count)?);
+
+    let results = query_session.search(&query, &DocSetCollector)?;
+    for doc_address in results {
+        let Ok(Some(doc_id)) = doc_mapper.get_doc_id(doc_address) else {
+            info!("Failed to get doc id from doc address: {doc_address:?}");
+            continue;
+        };
+
+        if let Some(doc) = doc_mapper.get_original_doc(doc_id) {
+            info!("Matched Doc [ID={doc_id:?}]: {doc:?}")
+        } else {
+            info!("Failed to reverse map id: {doc_id:?} to a document")
+        }
+    }
+
     let mut file_count: u32 = 0;
     let mut total_bytes: u32 = 0;
     let mut total_data_size: u64 = 0;
@@ -678,27 +699,6 @@ fn main() -> Result<()> {
     }
 
     info!("magic: {MAGIC_BYTES:?}");
-
-    let query_session = QuerySession::new(&index)?;
-    let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
-
-    let query = boolean_query::title_contains_diary_and_not_girl(&query_session.schema())?;
-
-    info!("Matches count: {}", query_session.search(&query, &Count)?);
-
-    let results = query_session.search(&query, &DocSetCollector)?;
-    for doc_address in results {
-        let Ok(Some(doc_id)) = doc_mapper.get_doc_id(doc_address) else {
-            info!("Failed to get doc id from doc address: {doc_address:?}");
-            continue;
-        };
-
-        if let Some(doc) = doc_mapper.get_original_doc(doc_id) {
-            info!("Matched Doc [ID={doc_id:?}]: {doc:?}")
-        } else {
-            info!("Failed to reverse map id: {doc_id:?} to a document")
-        }
-    }
 
     Ok(())
 }
