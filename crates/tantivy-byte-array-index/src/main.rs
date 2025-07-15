@@ -9,10 +9,10 @@ use crate::common::{Config, SchemaFields};
 use crate::doc::{DocIdMapper, DocMapper, DocSchema, examples};
 use crate::error::Error as LocalError;
 use crate::error::Result;
-use crate::index::IndexBuilder;
+use crate::index::{ImmutableIndex, IndexBuilder};
 use crate::query_session::QuerySession;
 use crc32fast::Hasher;
-use log::info;
+use log::{info, trace};
 use query::boolean_query;
 use serde::{Deserialize, Serialize};
 use stable_deref_trait::StableDeref;
@@ -397,12 +397,12 @@ impl InnerDirectory {
                 ..((file_metadata.data_offset
                     + file_metadata.data_content_len
                     + file_metadata.data_footer_len as u64) as usize);
-            info!("[{id}] Range: {}..{}", range.start, range.end);
+            trace!("[{id}] Range: {}..{}", range.start, range.end);
 
             let sub_data_block = data_block.slice_from(range); // zero-copy slice
 
             fs.insert(file_metadata.path.clone(), sub_data_block);
-            info!("[{id}] Inserted key: {:?}", file_metadata.path.clone());
+            trace!("[{id}] Inserted key: {:?}", file_metadata.path.clone());
         }
 
         Arc::new(RwLock::new(Self { file_map: fs }))
@@ -514,6 +514,7 @@ impl TerminatingWrite for NoopWriter {
     }
 }
 
+fn run_search_queries(query_session: &QuerySession, doc_mapper: &DocMapper) -> Result<()> {
     let query = boolean_query::title_contains_diary_and_not_girl(&query_session.schema())?;
 
     info!("Matches count: {}", query_session.search(&query, &Count)?);
@@ -531,6 +532,40 @@ impl TerminatingWrite for NoopWriter {
             info!("Failed to reverse map id: {doc_id:?} to a document")
         }
     }
+
+    Ok(())
+}
+
+const TANTIVY_METADATA_PATH: &str = "meta.json";
+fn main() -> Result<()> {
+    setup_logging();
+
+    let config = Config::default();
+    let schema = DocSchema::new(&config).into_schema();
+    let original_docs = examples();
+
+    let fields = SchemaFields::new(&schema, &config)?;
+
+    let index = IndexBuilder::new(schema)
+        .index_and_commit(
+            config.index_writer_memory_budget_in_bytes,
+            &fields,
+            original_docs,
+        )?
+        .build();
+
+    let metadata_path: PathBuf = PathBuf::from(TANTIVY_METADATA_PATH);
+    let dir = index.directory();
+
+    // +----------------+
+    // | Query Baseline |
+    // +----------------+
+    // These identical queries should work on our read-only archive directory implementation.
+
+    let query_session = QuerySession::new(&index)?;
+    let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
+
+    run_search_queries(&query_session, &doc_mapper)?;
 
     // These are the stages for preparing the index as a sequence of bytes.
     //      1. Draft the FileMetadata.
@@ -571,7 +606,7 @@ impl TerminatingWrite for NoopWriter {
         })?;
         let draft = FileMetadata::new(path.to_path_buf(), logical_size as u64, 0, 0);
 
-        info!("[{i}] {draft:#?}");
+        trace!("[{i}] {draft:#?}");
 
         file_metadata_list.push(draft);
     }
@@ -637,8 +672,8 @@ impl TerminatingWrite for NoopWriter {
         // Update offset for (N+1)th file
         current_offset += physical_size;
 
-        info!("[{i}] Data block size: {}", data_block_bytes.len());
-        info!("[{i}] FileMetadata (after back-fill) {file_metadata:#?}");
+        trace!("[{i}] Data block size: {}", data_block_bytes.len());
+        trace!("[{i}] FileMetadata (after back-fill) {file_metadata:#?}");
     }
     let data_block = DataBlock::new(data_block_bytes);
 
@@ -662,30 +697,43 @@ impl TerminatingWrite for NoopWriter {
         .set_total_data_block_size(total_data_block_size as u64)
         .set_file_metadata_list(&file_metadata_list);
 
-    info!("Magic: {MAGIC_BYTES:?}");
-    info!(
+    trace!("Magic: {MAGIC_BYTES:?}");
+    trace!(
         "[Header] data block size:{}, file metadata block size: {} file metadata block crc32:{}",
         header.total_data_block_size, header.file_metadata_size, header.file_metadata_crc32
     );
 
-    // let header_bytes: Vec<u8> = header.into();
-    // info!(
-    //     "[Header] header ({} bytes):{header_bytes:?}",
-    //     header_bytes.len()
-    // );
-
     let header_bytes: Vec<u8> = header.into();
     let roundtrip_header = Header::try_from(header_bytes)?;
-    info!(
+    trace!(
         "[Header] data block size:{}, file metadata block size: {} file metadata block crc32:{}",
         roundtrip_header.total_data_block_size,
         roundtrip_header.file_metadata_size,
         roundtrip_header.file_metadata_crc32
     );
-    info!("[Header] Round trip header:{roundtrip_header:#?}");
+    trace!("[Header] Round trip header:{roundtrip_header:#?}");
 
+    // +----------------------+
+    // | Blob Index Directory |
+    // +----------------------+
     let archive_dir = ReadOnlyArchiveDirectory::new(roundtrip_header, data_block);
-    info!("Read-only Archive Directory:{archive_dir:?}");
+    trace!("Read-only Archive Directory:{archive_dir:?}");
+
+    let schema = DocSchema::new(&config).into_schema();
+    let read_only_index = Index::open_or_create(archive_dir, schema)?;
+    let index_wrapper = ImmutableIndex::new(read_only_index);
+
+    // +---------------------------+
+    // | Query Baseline Comparison |
+    // +---------------------------+
+    // The read-only directory of this index was constructed from an index. We verified earlier that
+    // querying it works without problems. The same queries should return identical results when
+    // applied against the read-only archive directory implementation.
+
+    let query_session = QuerySession::new(&index_wrapper)?;
+    let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
+
+    run_search_queries(&query_session, &doc_mapper)?;
 
     Ok(())
 }
