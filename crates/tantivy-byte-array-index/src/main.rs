@@ -24,9 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use tantivy::collector::{Count, DocSetCollector};
 use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
-use tantivy::directory::{
-    FileHandle, ManagedDirectory, OwnedBytes, WatchCallback, WatchHandle, WritePtr,
-};
+use tantivy::directory::{FileHandle, FileSlice, OwnedBytes, WatchCallback, WatchHandle, WritePtr};
 use tantivy::{Directory, HasLen, INDEX_FORMAT_VERSION};
 use thiserror::Error;
 
@@ -322,13 +320,13 @@ struct DataBlock {
 }
 
 impl DataBlock {
-    fn new(data: Vec<u8>) -> Self {
-        let range = 0..data.len();
-        Self {
-            data: Arc::from(data),
-            range,
-        }
-    }
+    // fn new(data: Vec<u8>) -> Self {
+    //     let range = 0..data.len();
+    //     Self {
+    //         data: Arc::from(data),
+    //         range,
+    //     }
+    // }
 
     fn slice_from(&self, range: Range<usize>) -> DataBlock {
         let new_start = self.range.start + range.start;
@@ -414,74 +412,74 @@ impl TantivyFooterHack {
     }
 }
 
-struct DataBlockBuilder<'a> {
-    dir: &'a ManagedDirectory,
-    data: Vec<u8>,
-}
-
-impl<'a> DataBlockBuilder<'a> {
-    fn new(dir: &'a ManagedDirectory) -> Self {
-        Self {
-            dir,
-            data: Vec::new(),
-        }
-    }
-
-    fn with_file_metadata_list(mut self, file_metadata: &[FileMetadata]) -> Self {
-        let metadata_file = PathBuf::from("meta.json");
-
-        for file_metadata in file_metadata {
-            if file_metadata.path.eq(&metadata_file) {
-                let contents = self
-                    .dir
-                    .atomic_read(&file_metadata.path)
-                    .unwrap_or_else(|e| {
-                        panic!(
-                            "Error: {e} while reading metadata file: {:?}",
-                            file_metadata.path
-                        )
-                    });
-
-                let crc = crc32fast::hash(&contents);
-                let footer = TantivyFooterHack::new(crc);
-                info!("path: {}, footer: {footer:?}", file_metadata.path.display());
-                let footer_bytes = footer.to_bytes().unwrap();
-                info!("footer {} bytes: {footer_bytes:?}", footer_bytes.len());
-
-                self.data.extend(contents)
-            } else {
-                let file_slice = self.dir.open_read(&file_metadata.path).unwrap_or_else(|e| {
-                    panic!("Error: {e} while opening file: {:?}", file_metadata.path)
-                });
-
-                let mut crc_hasher = Hasher::new();
-                for chunk in file_slice.stream_file_chunks() {
-                    let owned_bytes = chunk.unwrap_or_else(|e| {
-                        panic!(
-                            "Error: {e} while streaming file chunk from file: {:?}",
-                            file_metadata.path
-                        )
-                    });
-
-                    crc_hasher.update(owned_bytes.as_slice());
-                    self.data.extend(owned_bytes.as_slice());
-                }
-
-                let crc = crc_hasher.finalize();
-                let footer = TantivyFooterHack::new(crc);
-                info!("path: {}, footer: {footer:?}", file_metadata.path.display());
-                let footer_bytes = footer.to_bytes().unwrap();
-                info!("footer {} bytes: {footer_bytes:?}", footer_bytes.len());
-            };
-        }
-
-        self
-    }
-
-    fn build(self) -> DataBlock {
-        DataBlock::new(self.data)
-    }
-}
+// struct DataBlockBuilder<'a> {
+//     dir: &'a ManagedDirectory,
+//     data: Vec<u8>,
+// }
+//
+// impl<'a> DataBlockBuilder<'a> {
+//     fn new(dir: &'a ManagedDirectory) -> Self {
+//         Self {
+//             dir,
+//             data: Vec::new(),
+//         }
+//     }
+//
+//     fn with_file_metadata_list(mut self, file_metadata: &[FileMetadata]) -> Self {
+//         let metadata_file = PathBuf::from("meta.json");
+//
+//         for file_metadata in file_metadata {
+//             if file_metadata.path.eq(&metadata_file) {
+//                 let contents = self
+//                     .dir
+//                     .atomic_read(&file_metadata.path)
+//                     .unwrap_or_else(|e| {
+//                         panic!(
+//                             "Error: {e} while reading metadata file: {:?}",
+//                             file_metadata.path
+//                         )
+//                     });
+//
+//                 let crc = crc32fast::hash(&contents);
+//                 let footer = TantivyFooterHack::new(crc);
+//                 info!("path: {}, footer: {footer:?}", file_metadata.path.display());
+//                 let footer_bytes = footer.to_bytes().unwrap();
+//                 info!("footer {} bytes: {footer_bytes:?}", footer_bytes.len());
+//
+//                 self.data.extend(contents)
+//             } else {
+//                 let file_slice = self.dir.open_read(&file_metadata.path).unwrap_or_else(|e| {
+//                     panic!("Error: {e} while opening file: {:?}", file_metadata.path)
+//                 });
+//
+//                 let mut crc_hasher = Hasher::new();
+//                 for chunk in file_slice.stream_file_chunks() {
+//                     let owned_bytes = chunk.unwrap_or_else(|e| {
+//                         panic!(
+//                             "Error: {e} while streaming file chunk from file: {:?}",
+//                             file_metadata.path
+//                         )
+//                     });
+//
+//                     crc_hasher.update(owned_bytes.as_slice());
+//                     self.data.extend(owned_bytes.as_slice());
+//                 }
+//
+//                 let crc = crc_hasher.finalize();
+//                 let footer = TantivyFooterHack::new(crc);
+//                 info!("path: {}, footer: {footer:?}", file_metadata.path.display());
+//                 let footer_bytes = footer.to_bytes().unwrap();
+//                 info!("footer {} bytes: {footer_bytes:?}", footer_bytes.len());
+//             };
+//         }
+//
+//         self
+//     }
+//
+//     fn build(self) -> DataBlock {
+//         DataBlock::new(self.data)
+//     }
+// }
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -582,6 +580,7 @@ impl Directory for ReadOnlyArchiveDirectory {
     }
 }
 
+const TANTIVY_METADATA_PATH: &str = "meta.json";
 fn main() -> Result<()> {
     setup_logging();
 
@@ -599,7 +598,7 @@ fn main() -> Result<()> {
         )?
         .build();
 
-    let metadata_file = PathBuf::from("meta.json");
+    let metadata_path: PathBuf = PathBuf::from(TANTIVY_METADATA_PATH);
     let dir = index.directory();
 
     let query_session = QuerySession::new(&index)?;
@@ -623,80 +622,189 @@ fn main() -> Result<()> {
         }
     }
 
-    let mut file_count: u32 = 0;
-    let mut total_bytes: u32 = 0;
-    let mut total_data_size: u64 = 0;
+    // These are the stages for preparing the index as a sequence of bytes.
+    //      1. Draft the FileMetadata.
+    //      2. Build the data block one file at a time.
+    //          a. Back-fill pending fields in FileMetadata (offset, footer, crc)
+    //      4. Build the Header.
 
-    let mut header_builder = HeaderBuilder::new();
-    for path in dir.list_managed_files() {
-        let data_size = if path.eq(&metadata_file) {
-            let contents = dir
-                .atomic_read(&path)
-                .unwrap_or_else(|e| panic!("Error: {e} while reading metadata file: {path:?}"));
+    // +--------------------+
+    // | Draft FileMetadata |
+    // +--------------------+
+    //      - Path length
+    //      - Path
+    //      - Logical file size (footer is removed by Tantivy)
+    //
+    // The other fields are known only while building the data block. So it will be back-filled
+    // when the data blocks are being written.
 
-            contents.len()
+    let mut file_metadata_list = Vec::<FileMetadata>::new();
+    enum LogicalSlice {
+        MetaJson(Vec<u8>),
+        IndexDataFile(FileSlice),
+    }
+
+    let get_logical_slice = |path: &Path| -> Result<LogicalSlice> {
+        let logical_slice = if path.eq(&metadata_path) {
+            LogicalSlice::MetaJson(dir.atomic_read(path)?)
         } else {
-            let file_slice = dir
-                .open_read(&path)
-                .unwrap_or_else(|e| panic!("Error: {e} while opening file: {path:?}"));
-
-            file_slice.len()
+            LogicalSlice::IndexDataFile(dir.open_read(path)?)
         };
 
-        total_data_size += data_size as u64;
+        Ok(logical_slice)
+    };
 
-        let file_metadata = FileMetadata::new(path.clone(), data_size as u64, 0);
-        header_builder = header_builder.with_file_metadata(&file_metadata);
+    for (i, path) in dir.list_managed_files().iter().enumerate() {
+        let logical_size = get_logical_slice(path).map(|value| match value {
+            LogicalSlice::MetaJson(inner) => inner.len(),
+            LogicalSlice::IndexDataFile(inner) => inner.len(),
+        })?;
+        let draft = FileMetadata::new(path.to_path_buf(), logical_size as u64, 0);
 
-        info!(
-            "Path size={0}, size in bytes={data_size}, path={path:?}",
-            path.as_os_str().len()
-        );
+        info!("[{i}] {draft:#?}");
 
-        let bytes: Vec<u8> = (&file_metadata).into();
-        total_bytes += bytes.len() as u32;
-        file_count += 1;
-        info!(
-            "file count:{file_count} current total bytes: {total_bytes} in encoded form {:?}",
-            u32::to_le_bytes(total_bytes)
-        );
+        file_metadata_list.push(draft);
     }
 
-    let header = header_builder.build();
+    // +------------+
+    // | Data Block |
+    // +------------+
+    //
+    // The Tantivy directory strips the footer and serves only the logical file contents. So when
+    // assembling the data block implement a workaround - manually reconstruct and append the footer
+    // for all index data binary files (except the meta.json).
+    //
+    // Now we can back-fill the `data_footer_len` field in `FileMetadata`. We can also now compute
+    // and back-fill the `data_offset` of the next `FileMetadata` entry.
+    let mut data_block = Vec::<u8>::new();
+    let mut current_offset = 0;
+    for (i, file_metadata) in file_metadata_list.iter_mut().enumerate() {
+        let contents = get_logical_slice(&file_metadata.path)?;
+        let mut physical_size: u64 = 0;
+        match contents {
+            LogicalSlice::MetaJson(data) => {
+                debug_assert_eq!(file_metadata.data_content_len as usize, data.len(),);
+                physical_size = data.len() as u64;
 
-    info!(
-        "file count: {file_count} ({:?}) Total bytes: {total_bytes} in encoded form {:?}",
-        u32::to_le_bytes(file_count),
-        u32::to_le_bytes(total_bytes)
-    );
+                // Back-fill FileMetadata properties
+                debug_assert_eq!(file_metadata.data_offset, 0);
+                debug_assert_eq!(file_metadata.data_footer_len, 0);
 
-    let header_bytes: Vec<u8> = header.clone().into();
-    // info!("header: {header_bytes:?}");
+                file_metadata.data_offset = current_offset;
+                file_metadata.data_footer_len = 0; // footer is only for binary index files
 
-    let data_block = DataBlockBuilder::new(dir)
-        .with_file_metadata_list(header.file_metadata_list.as_slice())
-        .build();
-    // info!("data block: {data_block:?}");
-    info!("Total data block size: {}", data_block.len());
-    info!("Source data size: {total_data_size}");
+                // Append bytes to data block
+                data_block.extend(data);
+            }
+            LogicalSlice::IndexDataFile(file_slice) => {
+                let mut crc_hasher = Hasher::new();
+                for chunk in file_slice.stream_file_chunks() {
+                    let chunk = chunk?;
 
-    let roundtripped_header: Header = header_bytes.try_into().unwrap();
-    info!("roundtripped_header: {roundtripped_header:#?}");
+                    physical_size += chunk.len() as u64;
+                    crc_hasher.update(&chunk);
 
-    debug_assert_eq!(header.version, roundtripped_header.version);
-    debug_assert_eq!(header.file_count, roundtripped_header.file_count);
-    assert_eq!(
-        header.file_metadata_size,
-        roundtripped_header.file_metadata_size
-    );
-    // assert_eq!(header.file_metadata_crc32, roundtripped_header.file_metadata_crc32);
-    for (left, right) in header
-        .file_metadata_list
-        .iter()
-        .zip(roundtripped_header.file_metadata_list.iter())
-    {
-        debug_assert_eq!(left, right)
+                    data_block.extend(chunk.as_slice());
+                }
+
+                debug_assert_eq!(file_metadata.data_content_len, physical_size);
+
+                let crc_hash = crc_hasher.finalize();
+
+                // Back-fill FileMetadata properties
+                debug_assert_eq!(file_metadata.data_offset, 0);
+                debug_assert_eq!(file_metadata.data_footer_len, 0);
+
+                file_metadata.data_offset = current_offset;
+
+                let footer = TantivyFooterHack::new(crc_hash).to_bytes()?;
+                physical_size += footer.len() as u64;
+                file_metadata.data_footer_len = footer.len() as u8;
+
+                data_block.extend(footer);
+            }
+        }
+        // Update offset for (N+1)th file
+        current_offset += physical_size;
+
+        info!("[{i}] Data block size: {}", data_block.len());
+        info!("[{i}] FileMetadata (after back-fill) {file_metadata:#?}");
     }
+
+    // let mut file_count: u32 = 0;
+    // let mut total_bytes: u32 = 0;
+    // let mut total_data_size: u64 = 0;
+    //
+    // let mut header_builder = HeaderBuilder::new();
+    // for path in dir.list_managed_files() {
+    //     let data_size = if path.eq(&metadata_path) {
+    //         let contents = dir
+    //             .atomic_read(&path)
+    //             .unwrap_or_else(|e| panic!("Error: {e} while reading metadata file: {path:?}"));
+    //
+    //         contents.len()
+    //     } else {
+    //         let file_slice = dir
+    //             .open_read(&path)
+    //             .unwrap_or_else(|e| panic!("Error: {e} while opening file: {path:?}"));
+    //
+    //         file_slice.len()
+    //     };
+    //
+    //     total_data_size += data_size as u64;
+    //
+    //     let file_metadata = FileMetadata::new(path.clone(), data_size as u64, 0);
+    //     header_builder = header_builder.with_file_metadata(&file_metadata);
+    //
+    //     info!(
+    //         "Path size={0}, size in bytes={data_size}, path={path:?}",
+    //         path.as_os_str().len()
+    //     );
+    //
+    //     let bytes: Vec<u8> = (&file_metadata).into();
+    //     total_bytes += bytes.len() as u32;
+    //     file_count += 1;
+    //     info!(
+    //         "file count:{file_count} current total bytes: {total_bytes} in encoded form {:?}",
+    //         u32::to_le_bytes(total_bytes)
+    //     );
+    // }
+    //
+    // let header = header_builder.build();
+    //
+    // info!(
+    //     "file count: {file_count} ({:?}) Total bytes: {total_bytes} in encoded form {:?}",
+    //     u32::to_le_bytes(file_count),
+    //     u32::to_le_bytes(total_bytes)
+    // );
+    //
+    // let header_bytes: Vec<u8> = header.clone().into();
+    // // info!("header: {header_bytes:?}");
+    //
+    // let data_block = DataBlockBuilder::new(dir)
+    //     .with_file_metadata_list(header.file_metadata_list.as_slice())
+    //     .build();
+    // // info!("data block: {data_block:?}");
+    // info!("Total data block size: {}", data_block.len());
+    // info!("Source data size: {total_data_size}");
+    //
+    // let roundtripped_header: Header = header_bytes.try_into().unwrap();
+    // info!("roundtripped_header: {roundtripped_header:#?}");
+    //
+    // debug_assert_eq!(header.version, roundtripped_header.version);
+    // debug_assert_eq!(header.file_count, roundtripped_header.file_count);
+    // assert_eq!(
+    //     header.file_metadata_size,
+    //     roundtripped_header.file_metadata_size
+    // );
+    // // assert_eq!(header.file_metadata_crc32, roundtripped_header.file_metadata_crc32);
+    // for (left, right) in header
+    //     .file_metadata_list
+    //     .iter()
+    //     .zip(roundtripped_header.file_metadata_list.iter())
+    // {
+    //     debug_assert_eq!(left, right)
+    // }
 
     info!("magic: {MAGIC_BYTES:?}");
 
