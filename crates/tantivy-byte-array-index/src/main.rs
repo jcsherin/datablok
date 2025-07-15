@@ -55,15 +55,20 @@ impl FileMetadata {
             + Self::PATH_LEN_BYTES) as usize
     }
 
-    pub fn new(path: PathBuf, data_size: u64, data_offset: u64) -> Self {
+    pub fn new(
+        path: PathBuf,
+        data_content_len: u64,
+        data_offset: u64,
+        data_footer_len: u8,
+    ) -> Self {
         let path_len = path.as_os_str().as_bytes().len() as u8;
 
         Self {
             path,
             path_len,
             data_offset,
-            data_content_len: data_size,
-            data_footer_len: 0,
+            data_content_len,
+            data_footer_len,
         }
     }
 
@@ -72,6 +77,7 @@ impl FileMetadata {
 
         bytes.extend(self.data_offset.to_le_bytes());
         bytes.extend(self.data_content_len.to_le_bytes());
+        bytes.extend(self.data_footer_len.to_le_bytes());
         bytes.extend(self.path_len.to_le_bytes());
         bytes.extend(path);
 
@@ -86,15 +92,23 @@ impl FileMetadata {
         cursor.read_exact(&mut u64_buffer)?;
         let data_size = u64::from_le_bytes(u64_buffer);
 
-        let mut path_len_buffer = [0u8; 1];
-        cursor.read_exact(&mut path_len_buffer)?;
-        let path_len = u8::from_le_bytes(path_len_buffer);
+        let mut u8_buffer = [0u8; 1];
+        cursor.read_exact(u8_buffer.as_mut())?;
+        let data_footer_len = u8::from_le_bytes(u8_buffer);
+
+        cursor.read_exact(&mut u8_buffer)?;
+        let path_len = u8::from_le_bytes(u8_buffer);
 
         let mut path_buffer = vec![0u8; path_len as usize];
         cursor.read_exact(&mut path_buffer)?;
         let path = PathBuf::from(OsStr::from_bytes(&path_buffer));
 
-        Ok(FileMetadata::new(path, data_size, data_offset))
+        Ok(FileMetadata::new(
+            path,
+            data_size,
+            data_offset,
+            data_footer_len,
+        ))
     }
 }
 
@@ -371,14 +385,17 @@ impl InnerDirectory {
     fn new(header: Header, data_block: DataBlock) -> Arc<RwLock<InnerDirectory>> {
         let mut fs = std::collections::HashMap::new();
 
-        let data_block_start = HEADER_SIZE + header.file_metadata_size as usize;
-        for file_metadata in header.file_metadata_list.iter() {
-            let offset = file_metadata.data_offset as usize - data_block_start;
+        for (id, file_metadata) in header.file_metadata_list.iter().enumerate() {
+            let range = (file_metadata.data_offset as usize)
+                ..((file_metadata.data_offset
+                    + file_metadata.data_content_len
+                    + file_metadata.data_footer_len as u64) as usize);
+            info!("[{id}] Range: {}..{}", range.start, range.end);
 
-            let range = offset..offset + file_metadata.data_content_len as usize;
             let sub_data_block = data_block.slice_from(range); // zero-copy slice
 
             fs.insert(file_metadata.path.clone(), sub_data_block);
+            info!("[{id}] Inserted key: {:?}", file_metadata.path.clone());
         }
 
         Arc::new(RwLock::new(Self { file_map: fs }))
@@ -538,7 +555,7 @@ fn main() -> Result<()> {
             LogicalSlice::MetaJson(inner) => inner.len(),
             LogicalSlice::IndexDataFile(inner) => inner.len(),
         })?;
-        let draft = FileMetadata::new(path.to_path_buf(), logical_size as u64, 0);
+        let draft = FileMetadata::new(path.to_path_buf(), logical_size as u64, 0, 0);
 
         info!("[{i}] {draft:#?}");
 
@@ -651,81 +668,10 @@ fn main() -> Result<()> {
         roundtrip_header.file_metadata_size,
         roundtrip_header.file_metadata_crc32
     );
+    info!("[Header] Round trip header:{:#?}", roundtrip_header);
 
-    // let mut file_count: u32 = 0;
-    // let mut total_bytes: u32 = 0;
-    // let mut total_data_size: u64 = 0;
-    //
-    // let mut header_builder = HeaderBuilder::new();
-    // for path in dir.list_managed_files() {
-    //     let data_size = if path.eq(&metadata_path) {
-    //         let contents = dir
-    //             .atomic_read(&path)
-    //             .unwrap_or_else(|e| panic!("Error: {e} while reading metadata file: {path:?}"));
-    //
-    //         contents.len()
-    //     } else {
-    //         let file_slice = dir
-    //             .open_read(&path)
-    //             .unwrap_or_else(|e| panic!("Error: {e} while opening file: {path:?}"));
-    //
-    //         file_slice.len()
-    //     };
-    //
-    //     total_data_size += data_size as u64;
-    //
-    //     let file_metadata = FileMetadata::new(path.clone(), data_size as u64, 0);
-    //     header_builder = header_builder.with_file_metadata(&file_metadata);
-    //
-    //     info!(
-    //         "Path size={0}, size in bytes={data_size}, path={path:?}",
-    //         path.as_os_str().len()
-    //     );
-    //
-    //     let bytes: Vec<u8> = (&file_metadata).into();
-    //     total_bytes += bytes.len() as u32;
-    //     file_count += 1;
-    //     info!(
-    //         "file count:{file_count} current total bytes: {total_bytes} in encoded form {:?}",
-    //         u32::to_le_bytes(total_bytes)
-    //     );
-    // }
-    //
-    // let header = header_builder.build();
-    //
-    // info!(
-    //     "file count: {file_count} ({:?}) Total bytes: {total_bytes} in encoded form {:?}",
-    //     u32::to_le_bytes(file_count),
-    //     u32::to_le_bytes(total_bytes)
-    // );
-    //
-    // let header_bytes: Vec<u8> = header.clone().into();
-    // // info!("header: {header_bytes:?}");
-    //
-    // let data_block = DataBlockBuilder::new(dir)
-    //     .with_file_metadata_list(header.file_metadata_list.as_slice())
-    //     .build();
-    // // info!("data block: {data_block:?}");
-    // info!("Total data block size: {}", data_block.len());
-    // info!("Source data size: {total_data_size}");
-    //
-    // let roundtripped_header: Header = header_bytes.try_into().unwrap();
-    // info!("roundtripped_header: {roundtripped_header:#?}");
-    //
-    // debug_assert_eq!(header.version, roundtripped_header.version);
-    // debug_assert_eq!(header.file_count, roundtripped_header.file_count);
-    // assert_eq!(
-    //     header.file_metadata_size,
-    //     roundtripped_header.file_metadata_size
-    // );
-    // // assert_eq!(header.file_metadata_crc32, roundtripped_header.file_metadata_crc32);
-    // for (left, right) in header
-    //     .file_metadata_list
-    //     .iter()
-    //     .zip(roundtripped_header.file_metadata_list.iter())
-    // {
-    //     debug_assert_eq!(left, right)
-    // }
+    let archive_dir = ReadOnlyArchiveDirectory::new(roundtrip_header, data_block);
+    info!("Read-only Archive Directory:{:?}", archive_dir);
 
     Ok(())
 }
