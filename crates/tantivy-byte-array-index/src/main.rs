@@ -173,7 +173,6 @@ impl HeaderBuilder {
 
     pub fn with_file_metadata(mut self, file_metadata: &FileMetadata) -> HeaderBuilder {
         self.inner.file_count += 1;
-        self.inner.total_data_block_size += file_metadata.data_content_len;
         self.inner.file_metadata_list.push(file_metadata.clone());
         self
     }
@@ -669,13 +668,13 @@ fn main() -> Result<()> {
     // +------------+
     // | Data Block |
     // +------------+
-    //
     // The Tantivy directory strips the footer and serves only the logical file contents. So when
     // assembling the data block implement a workaround - manually reconstruct and append the footer
     // for all index data binary files (except the meta.json).
     //
     // Now we can back-fill the `data_footer_len` field in `FileMetadata`. We can also now compute
     // and back-fill the `data_offset` of the next `FileMetadata` entry.
+
     let mut data_block = Vec::<u8>::new();
     let mut current_offset = 0;
     for (i, file_metadata) in file_metadata_list.iter_mut().enumerate() {
@@ -730,6 +729,31 @@ fn main() -> Result<()> {
         info!("[{i}] Data block size: {}", data_block.len());
         info!("[{i}] FileMetadata (after back-fill) {file_metadata:#?}");
     }
+
+    // +--------------+
+    // | Header Block |
+    // +--------------+
+    let file_count = file_metadata_list.len();
+    let total_data_block_size = data_block.len();
+
+    let mut file_metadata_block = Vec::<u8>::new();
+    let mut file_metadata_block_hasher = Hasher::new();
+    for file_metadata in &file_metadata_list {
+        let bytes: Vec<u8> = file_metadata.into();
+
+        file_metadata_block_hasher.update(&bytes);
+        file_metadata_block.extend(bytes);
+    }
+
+    let file_metadata_crc32 = file_metadata_block_hasher.finalize();
+    let file_metadata_size = file_metadata_block.len() as u32;
+
+    info!("[Header] magic: {MAGIC_BYTES:?}");
+    info!("[Header] version: {VERSION}");
+    info!("[Header] Files: {file_count}");
+    info!("[Header] Data Block Size: {total_data_block_size}");
+    info!("[Header] File Metadata Block Size: {file_metadata_size}");
+    info!("[Header] File Metadata Block CRC32: {file_metadata_crc32}");
 
     // let mut file_count: u32 = 0;
     // let mut total_bytes: u32 = 0;
@@ -805,8 +829,6 @@ fn main() -> Result<()> {
     // {
     //     debug_assert_eq!(left, right)
     // }
-
-    info!("magic: {MAGIC_BYTES:?}");
 
     Ok(())
 }
