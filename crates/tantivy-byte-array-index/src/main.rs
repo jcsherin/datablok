@@ -7,6 +7,7 @@ mod query_session;
 
 use crate::common::{Config, SchemaFields};
 use crate::doc::{DocIdMapper, DocMapper, DocSchema, examples};
+use crate::error::Error as LocalError;
 use crate::error::Result;
 use crate::index::IndexBuilder;
 use crate::query_session::QuerySession;
@@ -26,16 +27,6 @@ use tantivy::collector::{Count, DocSetCollector};
 use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
 use tantivy::directory::{FileHandle, FileSlice, OwnedBytes, WatchCallback, WatchHandle, WritePtr};
 use tantivy::{Directory, HasLen, INDEX_FORMAT_VERSION};
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-enum IndexFormatError {
-    #[error("Malformed header detected. Header size: {actual} is insufficient to hold metadata.")]
-    TruncatedHeader { actual: usize },
-
-    #[error("Error parsing header from bytes.")]
-    ParseError(#[from] std::io::Error),
-}
 
 #[derive(Debug, Default, PartialEq, Clone)]
 struct FileMetadata {
@@ -87,9 +78,7 @@ impl FileMetadata {
         bytes
     }
 
-    fn from_cursor(
-        cursor: &mut std::io::Cursor<Vec<u8>>,
-    ) -> std::result::Result<Self, IndexFormatError> {
+    fn from_cursor(cursor: &mut std::io::Cursor<Vec<u8>>) -> std::result::Result<Self, LocalError> {
         let mut u64_buffer = [0u8; 8];
         cursor.read_exact(&mut u64_buffer)?;
         let data_offset = u64::from_le_bytes(u64_buffer);
@@ -156,72 +145,39 @@ impl Header {
             + Self::FILE_METADATA_SIZE_LEN
             + Self::FILE_METADATA_CRC32_LEN) as usize
     }
+
+    fn set_file_count(mut self, count: u32) -> Self {
+        self.file_count = count;
+        self
+    }
+
+    fn set_version(mut self, version: u8) -> Self {
+        self.version = version;
+        self
+    }
+
+    fn set_file_metadata_size(mut self, size: u32) -> Self {
+        self.file_metadata_size = size;
+        self
+    }
+
+    fn set_file_metadata_crc32(mut self, crc32: u32) -> Self {
+        self.file_metadata_crc32 = crc32;
+        self
+    }
+
+    fn set_total_data_block_size(mut self, size: u64) -> Self {
+        self.total_data_block_size = size;
+        self
+    }
+
+    fn set_file_metadata_list(mut self, list: &[FileMetadata]) -> Self {
+        self.file_metadata_list = list.to_vec();
+        self
+    }
 }
 
 const HEADER_SIZE: usize = Header::header_size();
-
-struct HeaderBuilder {
-    inner: Header,
-}
-
-impl HeaderBuilder {
-    pub fn new() -> Self {
-        Self {
-            inner: Header::default(),
-        }
-    }
-
-    pub fn with_file_metadata(mut self, file_metadata: &FileMetadata) -> HeaderBuilder {
-        self.inner.file_count += 1;
-        self.inner.file_metadata_list.push(file_metadata.clone());
-        self
-    }
-
-    pub fn with_version(mut self, version: u8) -> HeaderBuilder {
-        self.inner.version = version;
-        self
-    }
-
-    pub fn with_file_metadata_size(mut self, size: u32) -> HeaderBuilder {
-        self.inner.file_metadata_size = size;
-        self
-    }
-
-    pub fn with_file_metadata_crc32(mut self, crc32: u32) -> HeaderBuilder {
-        self.inner.file_metadata_crc32 = crc32;
-        self
-    }
-
-    pub fn build(mut self) -> Header {
-        let total_metadata_size: u64 = self
-            .inner
-            .file_metadata_list
-            .iter()
-            .map(|fm| FileMetadata::header_size() + fm.path.as_os_str().len())
-            .sum::<usize>() as u64;
-        self.inner.file_metadata_size = total_metadata_size as u32; // back-fill
-
-        // The file_metadata_crc32 is deliberately not back-filled here. This is back-filled only
-        // when we serialize this Header into bytes. Computing this value requires serializing the
-        // file metadata block into bytes and then computing its crc32 hash. This is undesirable
-        // because we will immediately discard the serialized bytes. Instead, when this Header is
-        // serialized into bytes the file_metadata_crc32 can be back-filled on the fly. This keeps
-        // the code which parses bytes back into Header tangle free. The trade-off is that in a
-        // round-trip test we have to skip comparing the file_metadata_crc32 field. This purpose of
-        // this field is to check if the file metadata block survived storage.
-
-        let data_block_offset = HEADER_SIZE as u64 + total_metadata_size;
-
-        let mut current_offset = data_block_offset;
-        for file_metadata in self.inner.file_metadata_list.iter_mut() {
-            file_metadata.data_offset = current_offset; // back-fill
-
-            current_offset += file_metadata.data_content_len;
-        }
-
-        self.inner
-    }
-}
 
 impl From<Header> for Vec<u8> {
     fn from(value: Header) -> Self {
@@ -232,13 +188,17 @@ impl From<Header> for Vec<u8> {
         bytes.extend(value.file_count.to_le_bytes());
         bytes.extend(value.total_data_block_size.to_le_bytes());
 
-        let mut file_metadata_bytes = Vec::new();
+        let mut file_metadata_bytes: Vec<u8> = Vec::new();
+        let mut hasher = Hasher::new();
         for file_metadata in value.file_metadata_list {
-            file_metadata_bytes.extend::<Vec<u8>>((&file_metadata).into());
+            let bytes: Vec<u8> = (&file_metadata).into();
+
+            hasher.update(&bytes);
+            file_metadata_bytes.extend(&bytes);
         }
 
         let file_metadata_size = file_metadata_bytes.len() as u32;
-        let file_metadata_crc32 = crc32fast::hash(file_metadata_bytes.as_slice());
+        let file_metadata_crc32 = hasher.finalize();
 
         bytes.extend(file_metadata_size.to_le_bytes());
         bytes.extend(file_metadata_crc32.to_le_bytes());
@@ -249,64 +209,53 @@ impl From<Header> for Vec<u8> {
 }
 
 impl TryFrom<Vec<u8>> for Header {
-    type Error = IndexFormatError;
+    type Error = LocalError;
 
     fn try_from(bytes: Vec<u8>) -> std::result::Result<Self, Self::Error> {
-        if bytes.len() < HEADER_SIZE {
-            return Err(IndexFormatError::TruncatedHeader {
-                actual: bytes.len(),
-            });
-        }
-
         let mut cursor = std::io::Cursor::new(bytes);
 
-        let mut header_builder = HeaderBuilder::new();
+        let mut magic_bytes = [0u8; 4];
+        cursor.read_exact(&mut magic_bytes)?; // magic bytes
+        debug_assert!(magic_bytes.eq(MAGIC_BYTES));
 
-        let mut u32_buffer = [0u8; 4];
-        cursor.read_exact(&mut u32_buffer)?; // magic bytes
-        debug_assert!(u32_buffer.eq(MAGIC_BYTES));
+        let mut version = [0u8; 1];
+        cursor.read_exact(&mut version)?;
+        debug_assert_eq!(version.first(), Some(&VERSION));
 
-        let mut u8_buffer = [0u8; 1];
-        cursor.read_exact(&mut u8_buffer)?;
-        debug_assert_eq!(u8_buffer[0], VERSION);
-        header_builder = header_builder.with_version(u8_buffer[0]);
+        let mut file_count = [0u8; 4];
+        cursor.read_exact(&mut file_count)?;
 
-        let mut file_count_buffer = [0u8; 4];
-        cursor.read_exact(&mut file_count_buffer)?;
-        let file_count = u32::from_le_bytes(file_count_buffer);
+        let mut total_data_block_size = [0u8; 8];
+        cursor.read_exact(&mut total_data_block_size)?;
 
-        let mut total_data_block_size_buffer = [0u8; 8];
-        cursor.read_exact(&mut total_data_block_size_buffer)?;
-        let total_data_block_size = u64::from_le_bytes(total_data_block_size_buffer); // used for assertion
+        let mut file_metadata_size = [0u8; 4];
+        cursor.read_exact(&mut file_metadata_size)?;
 
-        let mut file_metadata_size_buffer = [0u8; 4];
-        cursor.read_exact(&mut file_metadata_size_buffer)?;
-        let file_metadata_size = u32::from_le_bytes(file_metadata_size_buffer);
-        header_builder = header_builder.with_file_metadata_size(file_metadata_size);
+        let mut file_metadata_crc32 = [0u8; 4];
+        cursor.read_exact(&mut file_metadata_crc32)?;
 
-        let mut file_metadata_crc32_buffer = [0u8; 4];
-        cursor.read_exact(&mut file_metadata_crc32_buffer)?;
-        let file_metadata_crc32 = u32::from_le_bytes(file_metadata_crc32_buffer);
-        header_builder = header_builder.with_file_metadata_crc32(file_metadata_crc32);
+        let mut file_metadata_list_bytes =
+            vec![0u8; u32::from_le_bytes(file_metadata_size) as usize];
+        cursor.read_exact(&mut file_metadata_list_bytes)?;
 
-        let mut file_metadata_list_buffer = vec![0u8; file_metadata_size as usize];
-        cursor.read_exact(&mut file_metadata_list_buffer)?;
-
-        let crc32 = crc32fast::hash(&file_metadata_list_buffer);
-        debug_assert!(crc32 == file_metadata_crc32);
+        let checksum = crc32fast::hash(&file_metadata_list_bytes);
+        debug_assert!(checksum == u32::from_le_bytes(file_metadata_crc32));
 
         // Cursor that wraps the entire file metadata block
-        let mut cursor = std::io::Cursor::new(file_metadata_list_buffer);
-        for _ in 0..file_count {
+        let mut cursor = std::io::Cursor::new(file_metadata_list_bytes);
+        let mut file_metadata_list: Vec<FileMetadata> = vec![];
+        for _ in 0..u32::from_le_bytes(file_count) {
             let file_metadata = FileMetadata::from_cursor(&mut cursor)?;
-            header_builder = header_builder.with_file_metadata(&file_metadata);
+            file_metadata_list.push(file_metadata);
         }
 
-        let header = header_builder.build();
-
-        // Verify that the total_data_block_size read from bytes matches the value derived from
-        // FileMetadata entries.
-        debug_assert_eq!(total_data_block_size, header.total_data_block_size);
+        let header = Header::default()
+            .set_version(version[0])
+            .set_file_count(u32::from_le_bytes(file_count))
+            .set_total_data_block_size(u64::from_le_bytes(total_data_block_size))
+            .set_file_metadata_size(u32::from_le_bytes(file_metadata_size))
+            .set_file_metadata_crc32(u32::from_le_bytes(file_metadata_crc32))
+            .set_file_metadata_list(&file_metadata_list);
 
         Ok(header)
     }
@@ -736,24 +685,40 @@ fn main() -> Result<()> {
     let file_count = file_metadata_list.len();
     let total_data_block_size = data_block.len();
 
-    let mut file_metadata_block = Vec::<u8>::new();
-    let mut file_metadata_block_hasher = Hasher::new();
-    for file_metadata in &file_metadata_list {
-        let bytes: Vec<u8> = file_metadata.into();
+    let file_metadata_list_bytes = file_metadata_list
+        .iter()
+        .fold(Vec::<u8>::new(), |acc, fm| [acc, fm.into()].concat());
+    let file_metadata_list_bytes_size = file_metadata_list_bytes.len();
+    let file_metadata_list_crc32 = crc32fast::hash(&file_metadata_list_bytes);
 
-        file_metadata_block_hasher.update(&bytes);
-        file_metadata_block.extend(bytes);
-    }
+    let header = Header::default()
+        .set_version(VERSION)
+        .set_file_count(file_count as u32)
+        .set_file_metadata_size(file_metadata_list_bytes_size as u32)
+        .set_file_metadata_crc32(file_metadata_list_crc32)
+        .set_total_data_block_size(total_data_block_size as u64)
+        .set_file_metadata_list(&file_metadata_list);
 
-    let file_metadata_crc32 = file_metadata_block_hasher.finalize();
-    let file_metadata_size = file_metadata_block.len() as u32;
+    info!("Magic: {MAGIC_BYTES:?}");
+    info!(
+        "[Header] data block size:{}, file metadata block size: {} file metadata block crc32:{}",
+        header.total_data_block_size, header.file_metadata_size, header.file_metadata_crc32
+    );
 
-    info!("[Header] magic: {MAGIC_BYTES:?}");
-    info!("[Header] version: {VERSION}");
-    info!("[Header] Files: {file_count}");
-    info!("[Header] Data Block Size: {total_data_block_size}");
-    info!("[Header] File Metadata Block Size: {file_metadata_size}");
-    info!("[Header] File Metadata Block CRC32: {file_metadata_crc32}");
+    // let header_bytes: Vec<u8> = header.into();
+    // info!(
+    //     "[Header] header ({} bytes):{header_bytes:?}",
+    //     header_bytes.len()
+    // );
+
+    let header_bytes: Vec<u8> = header.into();
+    let roundtrip_header = Header::try_from(header_bytes)?;
+    info!(
+        "[Header] data block size:{}, file metadata block size: {} file metadata block crc32:{}",
+        roundtrip_header.total_data_block_size,
+        roundtrip_header.file_metadata_size,
+        roundtrip_header.file_metadata_crc32
+    );
 
     // let mut file_count: u32 = 0;
     // let mut total_bytes: u32 = 0;
