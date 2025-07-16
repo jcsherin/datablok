@@ -515,23 +515,47 @@ impl TerminatingWrite for NoopWriter {
 }
 
 fn run_search_queries(query_session: &QuerySession, doc_mapper: &DocMapper) -> Result<()> {
-    let query = boolean_query::title_contains_diary_and_not_girl(&query_session.schema())?;
+    let print_search_results = |query| -> Result<()> {
+        let results = query_session.search(query, &DocSetCollector)?;
 
-    info!("Matches count: {}", query_session.search(&query, &Count)?);
+        for doc_address in results {
+            let Ok(Some(doc_id)) = doc_mapper.get_doc_id(doc_address) else {
+                info!("Failed to get doc id from doc address: {doc_address:?}");
+                continue;
+            };
 
-    let results = query_session.search(&query, &DocSetCollector)?;
-    for doc_address in results {
-        let Ok(Some(doc_id)) = doc_mapper.get_doc_id(doc_address) else {
-            info!("Failed to get doc id from doc address: {doc_address:?}");
-            continue;
-        };
-
-        if let Some(doc) = doc_mapper.get_original_doc(doc_id) {
-            info!("Matched Doc [ID={doc_id:?}]: {doc:?}")
-        } else {
-            info!("Failed to reverse map id: {doc_id:?} to a document")
+            if let Some(doc) = doc_mapper.get_original_doc(doc_id) {
+                info!("Matched Doc [ID={doc_id:?}]: {doc:?}")
+            } else {
+                info!("Failed to reverse map id: {doc_id:?} to a document")
+            }
         }
-    }
+        Ok(())
+    };
+
+    let q1 = boolean_query::title_contains_diary_and_not_girl(&query_session.schema())?;
+    info!("Q1: title:+diary AND title:-girl");
+    let count = query_session.search(&q1, &Count)?;
+    debug_assert_eq!(count, 1);
+    info!("Matches count: {count}");
+    print_search_results(&q1)?;
+    info!("***");
+
+    let q2 = boolean_query::title_contains_diary_or_cow(&query_session.schema())?;
+    info!("Q2: title:diary OR title:cow");
+    let count = query_session.search(&q2, &Count)?;
+    debug_assert_eq!(count, 4);
+    info!("Matches count: {}", query_session.search(&q2, &Count)?);
+    print_search_results(&q2)?;
+    info!("***");
+
+    let q3 = boolean_query::combine_term_and_phrase_query(&query_session.schema())?;
+    info!("Q3: title:diary OR title:\"dairy cow\"");
+    let count = query_session.search(&q3, &Count)?;
+    debug_assert_eq!(count, 4);
+    info!("Matches count: {}", query_session.search(&q3, &Count)?);
+    print_search_results(&q3)?;
+    info!("***");
 
     Ok(())
 }
@@ -565,7 +589,9 @@ fn main() -> Result<()> {
     let query_session = QuerySession::new(&index)?;
     let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
 
+    info!(">>> Querying RamDirectory");
     run_search_queries(&query_session, &doc_mapper)?;
+    info!("---");
 
     // These are the stages for preparing the index as a sequence of bytes.
     //      1. Draft the FileMetadata.
@@ -733,8 +759,8 @@ fn main() -> Result<()> {
     let query_session = QuerySession::new(&index_wrapper)?;
     let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
 
+    info!(">>> Querying ReadOnlyArchiveDirectory");
     run_search_queries(&query_session, &doc_mapper)?;
-
     Ok(())
 }
 
