@@ -17,6 +17,8 @@ use datafusion_common::arrow::datatypes::{DataType, Field, Schema};
 use datafusion_common::arrow::record_batch::RecordBatch;
 use log::{info, trace};
 use parquet::arrow::ArrowWriter;
+use parquet::data_type::AsBytes;
+use parquet::file::metadata::KeyValue;
 use query::boolean_query;
 use serde::{Deserialize, Serialize};
 use stable_deref_trait::StableDeref;
@@ -567,6 +569,8 @@ fn run_search_queries(query_session: &QuerySession, doc_mapper: &DocMapper) -> R
 }
 
 const TANTIVY_METADATA_PATH: &str = "meta.json";
+const FULL_TEXT_INDEX_KEY: &str = "tantivy_index_offset";
+
 fn main() -> Result<()> {
     setup_logging();
 
@@ -707,7 +711,7 @@ fn main() -> Result<()> {
         trace!("[{i}] Data block size: {}", data_block_bytes.len());
         trace!("[{i}] FileMetadata (after back-fill) {file_metadata:#?}");
     }
-    let data_block = DataBlock::new(data_block_bytes);
+    let data_block = DataBlock::new(data_block_bytes.clone());
 
     // +--------------+
     // | Header Block |
@@ -735,8 +739,8 @@ fn main() -> Result<()> {
         header.total_data_block_size, header.file_metadata_size, header.file_metadata_crc32
     );
 
-    let header_bytes: Vec<u8> = header.into();
-    let roundtrip_header = Header::try_from(header_bytes)?;
+    let header_bytes: Vec<u8> = header.clone().into();
+    let roundtrip_header = Header::try_from(header_bytes.clone())?;
     trace!(
         "[Header] data block size:{}, file metadata block size: {} file metadata block crc32:{}",
         roundtrip_header.total_data_block_size,
@@ -792,14 +796,35 @@ fn main() -> Result<()> {
     let batch = RecordBatch::try_new(schema.clone(), vec![title_array, body_array])?;
     info!("Created record batch: {batch:?}");
 
-    let path = PathBuf::from("example.parquet");
+    let path = PathBuf::from("fat.parquet");
     let file = File::create(&path)?;
 
     let mut writer = ArrowWriter::try_new(file, schema.clone(), None)?;
-    writer.write(&batch)?;
-    info!("Wrote record batch to {path:?}");
-    writer.close()?;
 
+    writer.write(&batch)?;
+    writer.flush()?;
+    info!("Wrote a record batch.");
+
+    let offset = writer.bytes_written();
+    info!("File writer offset: {offset}");
+
+    info!("Header bytes: {:?}", header_bytes.len());
+    info!("Data Block bytes: {:?}", data_block_bytes.len());
+    let index_size = header_bytes.len() + data_block_bytes.len();
+    info!("Index size: {index_size}");
+
+    writer.write_all(header_bytes.as_bytes())?;
+    writer.write_all(data_block_bytes.as_slice())?;
+    writer.flush()?;
+
+    info!("File writer offset: {}", writer.bytes_written());
+
+    writer.append_key_value_metadata(KeyValue::new(
+        FULL_TEXT_INDEX_KEY.to_string(),
+        offset.to_string(),
+    ));
+
+    writer.close()?;
     info!("Wrote parquet file here: {path:?}");
 
     Ok(())
