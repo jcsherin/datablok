@@ -12,6 +12,9 @@ use crate::error::Result;
 use crate::index::{ImmutableIndex, IndexBuilder};
 use crate::query_session::QuerySession;
 use crc32fast::Hasher;
+use datafusion_common::arrow::array::{ArrayRef, StringArray};
+use datafusion_common::arrow::datatypes::{DataType, Field, Schema};
+use datafusion_common::arrow::record_batch::RecordBatch;
 use log::{info, trace};
 use query::boolean_query;
 use serde::{Deserialize, Serialize};
@@ -395,8 +398,8 @@ impl InnerDirectory {
         for (id, file_metadata) in header.file_metadata_list.iter().enumerate() {
             let range = (file_metadata.data_offset as usize)
                 ..((file_metadata.data_offset
-                    + file_metadata.data_content_len
-                    + file_metadata.data_footer_len as u64) as usize);
+                + file_metadata.data_content_len
+                + file_metadata.data_footer_len as u64) as usize);
             trace!("[{id}] Range: {}..{}", range.start, range.end);
 
             let sub_data_block = data_block.slice_from(range); // zero-copy slice
@@ -761,6 +764,29 @@ fn main() -> Result<()> {
 
     info!(">>> Querying ReadOnlyArchiveDirectory");
     run_search_queries(&query_session, &doc_mapper)?;
+
+    // +------------------------------------------+
+    // | Create Parquet File With Full-Text Index |
+    // +------------------------------------------+
+
+    let title_field = Field::new("title", DataType::Utf8, true);
+    let body_field = Field::new("body", DataType::Utf8, true);
+
+    let schema = Schema::new(vec![title_field, body_field]);
+
+    let title_array: ArrayRef = Arc::new(
+        examples()
+            .iter()
+            .map(|doc| Some(doc.title()))
+            .collect::<StringArray>(),
+    );
+    let body_array: ArrayRef = Arc::new(
+        examples().iter().map(|doc| doc.body()).collect::<StringArray>(),
+    );
+    let batch = RecordBatch::try_new(Arc::new(schema), vec![title_array, body_array])?;
+    info!(">>> Creating RecordBatch");
+    info!("[RecordBatch] {batch:?}");
+
     Ok(())
 }
 

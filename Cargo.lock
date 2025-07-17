@@ -314,9 +314,9 @@ dependencies = [
 
 [[package]]
 name = "arrow-schema"
-version = "55.1.0"
+version = "55.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73a47aa0c771b5381de2b7f16998d351a6f4eb839f1e13d48353e17e873d969b"
+checksum = "af7686986a3bf2254c9fb130c623cdcb2f8e1f15763e7c71c310f0834da3d292"
 dependencies = [
  "serde",
  "serde_json",
@@ -762,7 +762,7 @@ dependencies = [
  "chrono",
  "datafusion-catalog",
  "datafusion-catalog-listing",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-common-runtime",
  "datafusion-datasource",
  "datafusion-datasource-csv",
@@ -803,7 +803,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "dashmap",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-common-runtime",
  "datafusion-datasource",
  "datafusion-execution",
@@ -828,7 +828,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "datafusion-catalog",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-datasource",
  "datafusion-execution",
  "datafusion-expr",
@@ -864,6 +864,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "datafusion-common"
+version = "48.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e13242fc58fd753787b0a538e5ae77d356cb9d0656fa85a591a33c5f106267f6"
+dependencies = [
+ "ahash",
+ "arrow",
+ "arrow-ipc",
+ "base64",
+ "half",
+ "hashbrown 0.14.5",
+ "indexmap",
+ "libc",
+ "log",
+ "paste",
+ "sqlparser",
+ "tokio",
+ "web-time",
+]
+
+[[package]]
 name = "datafusion-common-runtime"
 version = "48.0.0"
 source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed3d0f1e851d338ad2a7862"
@@ -882,7 +903,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-common-runtime",
  "datafusion-execution",
  "datafusion-expr",
@@ -909,7 +930,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "datafusion-catalog",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-common-runtime",
  "datafusion-datasource",
  "datafusion-execution",
@@ -933,7 +954,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "datafusion-catalog",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-common-runtime",
  "datafusion-datasource",
  "datafusion-execution",
@@ -960,7 +981,7 @@ source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed
 dependencies = [
  "arrow",
  "dashmap",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-expr",
  "futures",
  "log",
@@ -978,7 +999,7 @@ source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed
 dependencies = [
  "arrow",
  "chrono",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-doc",
  "datafusion-expr-common",
  "datafusion-functions-aggregate-common",
@@ -996,7 +1017,7 @@ version = "48.0.0"
 source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed3d0f1e851d338ad2a7862"
 dependencies = [
  "arrow",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "indexmap",
  "itertools",
  "paste",
@@ -1011,7 +1032,7 @@ dependencies = [
  "arrow-buffer",
  "base64",
  "chrono",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-doc",
  "datafusion-execution",
  "datafusion-expr",
@@ -1033,7 +1054,7 @@ source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed
 dependencies = [
  "ahash",
  "arrow",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-doc",
  "datafusion-execution",
  "datafusion-expr",
@@ -1053,7 +1074,7 @@ source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed
 dependencies = [
  "ahash",
  "arrow",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-expr-common",
  "datafusion-physical-expr-common",
 ]
@@ -1066,7 +1087,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "datafusion-catalog",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-expr",
  "datafusion-physical-plan",
  "parking_lot",
@@ -1079,7 +1100,7 @@ version = "48.0.0"
 source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed3d0f1e851d338ad2a7862"
 dependencies = [
  "arrow",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-doc",
  "datafusion-expr",
  "datafusion-functions-window-common",
@@ -1095,7 +1116,7 @@ name = "datafusion-functions-window-common"
 version = "48.0.0"
 source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed3d0f1e851d338ad2a7862"
 dependencies = [
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-physical-expr-common",
 ]
 
@@ -1116,7 +1137,7 @@ source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed
 dependencies = [
  "arrow",
  "chrono",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-expr",
  "datafusion-physical-expr",
  "indexmap",
@@ -1133,7 +1154,7 @@ source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed
 dependencies = [
  "ahash",
  "arrow",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-expr",
  "datafusion-expr-common",
  "datafusion-functions-aggregate-common",
@@ -1154,7 +1175,7 @@ source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed
 dependencies = [
  "ahash",
  "arrow",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-expr-common",
  "hashbrown 0.14.5",
  "itertools",
@@ -1166,7 +1187,7 @@ version = "48.0.0"
 source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed3d0f1e851d338ad2a7862"
 dependencies = [
  "arrow",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-execution",
  "datafusion-expr",
  "datafusion-expr-common",
@@ -1188,7 +1209,7 @@ dependencies = [
  "arrow-schema",
  "async-trait",
  "chrono",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-common-runtime",
  "datafusion-execution",
  "datafusion-expr",
@@ -1214,7 +1235,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "dashmap",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-common-runtime",
  "datafusion-execution",
  "datafusion-expr",
@@ -1236,7 +1257,7 @@ source = "git+https://github.com/apache/arrow-datafusion.git#5ebc49dc176c5b933ed
 dependencies = [
  "arrow",
  "bigdecimal",
- "datafusion-common",
+ "datafusion-common 48.0.0",
  "datafusion-expr",
  "indexmap",
  "log",
@@ -2474,6 +2495,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "psm"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e944464ec8536cd1beb0bbfd96987eb5e3b72f2ecdafdc5c769a37f1fa2ae1f"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2575,6 +2605,26 @@ checksum = "1465873a3dfdaa8ae7cb14b4383657caab0b3e8a0aa9ae8e04b044854c8dfce2"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "recursive"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0786a43debb760f491b1bc0269fe5e84155353c67482b9e60d0cfb596054b43e"
+dependencies = [
+ "recursive-proc-macro-impl",
+ "stacker",
+]
+
+[[package]]
+name = "recursive-proc-macro-impl"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76009fbe0614077fc1a2ce255e3a1881a2e3a3527097d5dc6d8212c585e7e38b"
+dependencies = [
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -2801,6 +2851,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4521174166bac1ff04fe16ef4524c70144cd29682a45978978ca3d7f4e0be11"
 dependencies = [
  "log",
+ "recursive",
  "sqlparser_derive",
 ]
 
@@ -2820,6 +2871,19 @@ name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+
+[[package]]
+name = "stacker"
+version = "0.1.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cddb07e32ddb770749da91081d8d0ac3a16f1a569a18b20348cd371f5dead06b"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "psm",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "static_assertions"
@@ -2921,6 +2985,7 @@ name = "tantivy-byte-array-index"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
+ "datafusion-common 48.0.1",
  "env_logger",
  "log",
  "once_cell",

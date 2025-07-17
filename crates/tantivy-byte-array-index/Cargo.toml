@@ -13,3 +13,4 @@ crc32fast = "1.4.2"
 stable_deref_trait = "1.2.0"
 serde_json = "1.0.140"
 serde = { version = "1.0.219", features = ["derive"] }
+datafusion-common = { version = "48.0.1", default-features = false }
