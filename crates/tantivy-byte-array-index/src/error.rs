@@ -20,6 +20,9 @@ pub enum Error {
 
     #[error("Arrow error: {0}")]
     Arrow(#[from] ArrowError),
+
+    #[error("Parquet error: {0}")]
+    Parquet(#[from] parquet::errors::ParquetError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

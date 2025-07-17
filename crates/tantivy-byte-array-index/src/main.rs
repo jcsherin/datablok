@@ -16,11 +16,13 @@ use datafusion_common::arrow::array::{ArrayRef, StringArray};
 use datafusion_common::arrow::datatypes::{DataType, Field, Schema};
 use datafusion_common::arrow::record_batch::RecordBatch;
 use log::{info, trace};
+use parquet::arrow::ArrowWriter;
 use query::boolean_query;
 use serde::{Deserialize, Serialize};
 use stable_deref_trait::StableDeref;
 use std::ffi::OsStr;
 use std::fmt::{Debug, Formatter};
+use std::fs::File;
 use std::io::{BufWriter, Error, ErrorKind, Read, Write};
 use std::ops::{Deref, Range};
 use std::os::unix::ffi::OsStrExt;
@@ -398,8 +400,8 @@ impl InnerDirectory {
         for (id, file_metadata) in header.file_metadata_list.iter().enumerate() {
             let range = (file_metadata.data_offset as usize)
                 ..((file_metadata.data_offset
-                + file_metadata.data_content_len
-                + file_metadata.data_footer_len as u64) as usize);
+                    + file_metadata.data_content_len
+                    + file_metadata.data_footer_len as u64) as usize);
             trace!("[{id}] Range: {}..{}", range.start, range.end);
 
             let sub_data_block = data_block.slice_from(range); // zero-copy slice
@@ -772,7 +774,7 @@ fn main() -> Result<()> {
     let title_field = Field::new("title", DataType::Utf8, true);
     let body_field = Field::new("body", DataType::Utf8, true);
 
-    let schema = Schema::new(vec![title_field, body_field]);
+    let schema = Arc::new(Schema::new(vec![title_field, body_field]));
 
     let title_array: ArrayRef = Arc::new(
         examples()
@@ -781,11 +783,23 @@ fn main() -> Result<()> {
             .collect::<StringArray>(),
     );
     let body_array: ArrayRef = Arc::new(
-        examples().iter().map(|doc| doc.body()).collect::<StringArray>(),
+        examples()
+            .iter()
+            .map(|doc| doc.body())
+            .collect::<StringArray>(),
     );
-    let batch = RecordBatch::try_new(Arc::new(schema), vec![title_array, body_array])?;
-    info!(">>> Creating RecordBatch");
-    info!("[RecordBatch] {batch:?}");
+    let batch = RecordBatch::try_new(schema.clone(), vec![title_array, body_array])?;
+    info!("Created record batch: {batch:?}");
+
+    let path = PathBuf::from("example.parquet");
+    let file = File::create(&path)?;
+
+    let mut writer = ArrowWriter::try_new(file, schema.clone(), None)?;
+    writer.write(&batch)?;
+    info!("Wrote record batch to {path:?}");
+    writer.close()?;
+
+    info!("Wrote parquet file here: {path:?}");
 
     Ok(())
 }
