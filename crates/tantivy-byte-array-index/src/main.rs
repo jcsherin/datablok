@@ -528,42 +528,42 @@ fn run_search_queries(query_session: &QuerySession, doc_mapper: &DocMapper) -> R
 
         for doc_address in results {
             let Ok(Some(doc_id)) = doc_mapper.get_doc_id(doc_address) else {
-                info!("Failed to get doc id from doc address: {doc_address:?}");
+                trace!("Failed to get doc id from doc address: {doc_address:?}");
                 continue;
             };
 
             if let Some(doc) = doc_mapper.get_original_doc(doc_id) {
-                info!("Matched Doc [ID={doc_id:?}]: {doc:?}")
+                trace!("Matched Doc [ID={doc_id:?}]: {doc:?}")
             } else {
-                info!("Failed to reverse map id: {doc_id:?} to a document")
+                trace!("Failed to reverse map id: {doc_id:?} to a document")
             }
         }
         Ok(())
     };
 
     let q1 = boolean_query::title_contains_diary_and_not_girl(&query_session.schema())?;
-    info!("Q1: title:+diary AND title:-girl");
+    trace!("Q1: title:+diary AND title:-girl");
     let count = query_session.search(&q1, &Count)?;
     debug_assert_eq!(count, 1);
-    info!("Matches count: {count}");
+    trace!("Matches count: {count}");
     print_search_results(&q1)?;
-    info!("***");
+    trace!("***");
 
     let q2 = boolean_query::title_contains_diary_or_cow(&query_session.schema())?;
-    info!("Q2: title:diary OR title:cow");
+    trace!("Q2: title:diary OR title:cow");
     let count = query_session.search(&q2, &Count)?;
     debug_assert_eq!(count, 4);
-    info!("Matches count: {}", query_session.search(&q2, &Count)?);
+    trace!("Matches count: {}", query_session.search(&q2, &Count)?);
     print_search_results(&q2)?;
-    info!("***");
+    trace!("***");
 
     let q3 = boolean_query::combine_term_and_phrase_query(&query_session.schema())?;
-    info!("Q3: title:diary OR title:\"dairy cow\"");
+    trace!("Q3: title:diary OR title:\"dairy cow\"");
     let count = query_session.search(&q3, &Count)?;
     debug_assert_eq!(count, 4);
-    info!("Matches count: {}", query_session.search(&q3, &Count)?);
+    trace!("Matches count: {}", query_session.search(&q3, &Count)?);
     print_search_results(&q3)?;
-    info!("***");
+    trace!("***");
 
     Ok(())
 }
@@ -599,9 +599,9 @@ fn main() -> Result<()> {
     let query_session = QuerySession::new(&index)?;
     let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
 
-    info!(">>> Querying RamDirectory");
+    trace!(">>> Querying RamDirectory");
     run_search_queries(&query_session, &doc_mapper)?;
-    info!("---");
+    trace!("---");
 
     // These are the stages for preparing the index as a sequence of bytes.
     //      1. Draft the FileMetadata.
@@ -769,12 +769,16 @@ fn main() -> Result<()> {
     let query_session = QuerySession::new(&index_wrapper)?;
     let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
 
-    info!(">>> Querying ReadOnlyArchiveDirectory");
+    trace!(">>> Querying ReadOnlyArchiveDirectory");
     run_search_queries(&query_session, &doc_mapper)?;
 
-    // +------------------------------------------+
-    // | Create Parquet File With Full-Text Index |
-    // +------------------------------------------+
+    // +---------------------------------------+
+    // | Embed Full-Text Index in Parquet File |
+    // +---------------------------------------+
+    // The `RecordBatch`es are written first. This is followed by the byte serialized full-text
+    // index. The offset of the index is added to `FileMetadata.key_value_metadata`. The Parquet
+    // file size is now larger because of the embedded full text index. This is backwards compatible
+    // with readers who will skip the index embedded within the file.
 
     let title_field = Field::new("title", DataType::Utf8, true);
     let body_field = Field::new("body", DataType::Utf8, true);
@@ -794,7 +798,6 @@ fn main() -> Result<()> {
             .collect::<StringArray>(),
     );
     let batch = RecordBatch::try_new(schema.clone(), vec![title_array, body_array])?;
-    info!("Created record batch: {batch:?}");
 
     let path = PathBuf::from("fat.parquet");
     let file = File::create(&path)?;
@@ -803,29 +806,27 @@ fn main() -> Result<()> {
 
     writer.write(&batch)?;
     writer.flush()?;
-    info!("Wrote a record batch.");
 
     let offset = writer.bytes_written();
-    info!("File writer offset: {offset}");
-
-    info!("Header bytes: {:?}", header_bytes.len());
-    info!("Data Block bytes: {:?}", data_block_bytes.len());
-    let index_size = header_bytes.len() + data_block_bytes.len();
-    info!("Index size: {index_size}");
 
     writer.write_all(header_bytes.as_bytes())?;
-    writer.write_all(data_block_bytes.as_slice())?;
-    writer.flush()?;
+    writer.write_all(data_block_bytes.as_bytes())?;
 
-    info!("File writer offset: {}", writer.bytes_written());
+    info!("Index will be written to offset: {offset}");
+    info!(
+        "Index size: {} bytes",
+        header_bytes.len() + data_block_bytes.len()
+    );
 
+    // Store the full-text index offset in `FileMetadata.key_value_metadata` for reading it back
+    // later.
     writer.append_key_value_metadata(KeyValue::new(
         FULL_TEXT_INDEX_KEY.to_string(),
         offset.to_string(),
     ));
 
     writer.close()?;
-    info!("Wrote parquet file here: {path:?}");
+    info!("Wrote Parquet file to: {}", path.display());
 
     Ok(())
 }
