@@ -860,14 +860,28 @@ fn main() -> Result<()> {
         .map_err(|e| ParquetError::General(e.to_string()))?;
     info!("Index {FULL_TEXT_INDEX_KEY} offset: {full_text_index_offset}");
 
-    // +-----------------------------+
-    // | Read Full-Text Index Header |
-    // +-----------------------------+
+    // +------------------------------------------+
+    // | Read Full-Text Index Embedded In Parquet |
+    // +------------------------------------------+
 
     file.seek(SeekFrom::Start(full_text_index_offset))?;
-    let header = Header::from_reader(file)?;
+    let index_header = Header::from_reader(&file)?;
 
-    info!("Index header: {header:#?}");
+    let mut data_block_buffer = vec![0u8; index_header.total_data_block_size as usize];
+    file.read_exact(&mut data_block_buffer)?;
+    let index_data = DataBlock::new(data_block_buffer);
+
+    let index_dir = ReadOnlyArchiveDirectory::new(index_header, index_data);
+
+    let schema = DocSchema::new(&config).into_schema();
+    let read_only_index = Index::open_or_create(index_dir, schema)?;
+    let index_wrapper = ImmutableIndex::new(read_only_index);
+
+    let query_session = QuerySession::new(&index_wrapper)?;
+    let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
+
+    info!(">>> Querying full-text index embedded within Parquet");
+    run_search_queries(&query_session, &doc_mapper)?;
 
     Ok(())
 }
