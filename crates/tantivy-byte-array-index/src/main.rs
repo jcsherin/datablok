@@ -28,7 +28,7 @@ use stable_deref_trait::StableDeref;
 use std::ffi::OsStr;
 use std::fmt::{Debug, Formatter};
 use std::fs::File;
-use std::io::{BufWriter, Error, ErrorKind, Read, Write};
+use std::io::{BufWriter, Error, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::ops::{Deref, Range};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -186,6 +186,53 @@ impl Header {
         self.file_metadata_list = list.to_vec();
         self
     }
+
+    fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let mut magic_bytes = [0u8; 4];
+        reader.read_exact(&mut magic_bytes)?; // magic bytes
+        debug_assert!(magic_bytes.eq(MAGIC_BYTES));
+
+        let mut version = [0u8; 1];
+        reader.read_exact(&mut version)?;
+        debug_assert_eq!(version.first(), Some(&VERSION));
+
+        let mut file_count = [0u8; 4];
+        reader.read_exact(&mut file_count)?;
+
+        let mut total_data_block_size = [0u8; 8];
+        reader.read_exact(&mut total_data_block_size)?;
+
+        let mut file_metadata_size = [0u8; 4];
+        reader.read_exact(&mut file_metadata_size)?;
+
+        let mut file_metadata_crc32 = [0u8; 4];
+        reader.read_exact(&mut file_metadata_crc32)?;
+
+        let mut file_metadata_list_bytes =
+            vec![0u8; u32::from_le_bytes(file_metadata_size) as usize];
+        reader.read_exact(&mut file_metadata_list_bytes)?;
+
+        let checksum = crc32fast::hash(&file_metadata_list_bytes);
+        debug_assert!(checksum == u32::from_le_bytes(file_metadata_crc32));
+
+        // Cursor that wraps the entire file metadata block
+        let mut cursor = std::io::Cursor::new(file_metadata_list_bytes);
+        let mut file_metadata_list: Vec<FileMetadata> = vec![];
+        for _ in 0..u32::from_le_bytes(file_count) {
+            let file_metadata = FileMetadata::from_cursor(&mut cursor)?;
+            file_metadata_list.push(file_metadata);
+        }
+
+        let header = Header::default()
+            .set_version(version[0])
+            .set_file_count(u32::from_le_bytes(file_count))
+            .set_total_data_block_size(u64::from_le_bytes(total_data_block_size))
+            .set_file_metadata_size(u32::from_le_bytes(file_metadata_size))
+            .set_file_metadata_crc32(u32::from_le_bytes(file_metadata_crc32))
+            .set_file_metadata_list(&file_metadata_list);
+
+        Ok(header)
+    }
 }
 
 impl From<Header> for Vec<u8> {
@@ -222,51 +269,7 @@ impl TryFrom<Vec<u8>> for Header {
 
     fn try_from(bytes: Vec<u8>) -> std::result::Result<Self, Self::Error> {
         let mut cursor = std::io::Cursor::new(bytes);
-
-        let mut magic_bytes = [0u8; 4];
-        cursor.read_exact(&mut magic_bytes)?; // magic bytes
-        debug_assert!(magic_bytes.eq(MAGIC_BYTES));
-
-        let mut version = [0u8; 1];
-        cursor.read_exact(&mut version)?;
-        debug_assert_eq!(version.first(), Some(&VERSION));
-
-        let mut file_count = [0u8; 4];
-        cursor.read_exact(&mut file_count)?;
-
-        let mut total_data_block_size = [0u8; 8];
-        cursor.read_exact(&mut total_data_block_size)?;
-
-        let mut file_metadata_size = [0u8; 4];
-        cursor.read_exact(&mut file_metadata_size)?;
-
-        let mut file_metadata_crc32 = [0u8; 4];
-        cursor.read_exact(&mut file_metadata_crc32)?;
-
-        let mut file_metadata_list_bytes =
-            vec![0u8; u32::from_le_bytes(file_metadata_size) as usize];
-        cursor.read_exact(&mut file_metadata_list_bytes)?;
-
-        let checksum = crc32fast::hash(&file_metadata_list_bytes);
-        debug_assert!(checksum == u32::from_le_bytes(file_metadata_crc32));
-
-        // Cursor that wraps the entire file metadata block
-        let mut cursor = std::io::Cursor::new(file_metadata_list_bytes);
-        let mut file_metadata_list: Vec<FileMetadata> = vec![];
-        for _ in 0..u32::from_le_bytes(file_count) {
-            let file_metadata = FileMetadata::from_cursor(&mut cursor)?;
-            file_metadata_list.push(file_metadata);
-        }
-
-        let header = Header::default()
-            .set_version(version[0])
-            .set_file_count(u32::from_le_bytes(file_count))
-            .set_total_data_block_size(u64::from_le_bytes(total_data_block_size))
-            .set_file_metadata_size(u32::from_le_bytes(file_metadata_size))
-            .set_file_metadata_crc32(u32::from_le_bytes(file_metadata_crc32))
-            .set_file_metadata_list(&file_metadata_list);
-
-        Ok(header)
+        Self::from_reader(&mut cursor)
     }
 }
 
@@ -831,11 +834,11 @@ fn main() -> Result<()> {
     writer.close()?;
     info!("Wrote Parquet file to: {}", saved_path.display());
 
-    // +----------------------------------------+
-    // | Read Full-Text Index from Parquet file |
-    // +----------------------------------------+
+    // +-------------------------------------+
+    // | Read Offset from key_value_metadata |
+    // +-------------------------------------+
 
-    let file = File::open(&saved_path)?;
+    let mut file = File::open(&saved_path)?;
 
     let reader = SerializedFileReader::new(file.try_clone()?)?;
     let meta = reader.metadata().file_metadata();
@@ -849,13 +852,22 @@ fn main() -> Result<()> {
         .ok_or(ParquetMetadata(format!(
             "Could not find key:{FULL_TEXT_INDEX_KEY} in key_value_metadata",
         )))?;
-    let offset = kv
+    let full_text_index_offset = kv
         .value
         .as_deref()
         .ok_or_else(|| ParquetError::General("Missing index offset".into()))?
         .parse::<u64>()
         .map_err(|e| ParquetError::General(e.to_string()))?;
-    info!("Index {FULL_TEXT_INDEX_KEY} offset: {offset}");
+    info!("Index {FULL_TEXT_INDEX_KEY} offset: {full_text_index_offset}");
+
+    // +-----------------------------+
+    // | Read Full-Text Index Header |
+    // +-----------------------------+
+
+    file.seek(SeekFrom::Start(full_text_index_offset))?;
+    let header = Header::from_reader(file)?;
+
+    info!("Index header: {header:#?}");
 
     Ok(())
 }
