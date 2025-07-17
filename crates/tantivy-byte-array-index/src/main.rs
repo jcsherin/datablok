@@ -8,6 +8,7 @@ mod query_session;
 use crate::common::{Config, SchemaFields};
 use crate::doc::{DocIdMapper, DocMapper, DocSchema, examples};
 use crate::error::Error as LocalError;
+use crate::error::Error::ParquetMetadata;
 use crate::error::Result;
 use crate::index::{ImmutableIndex, IndexBuilder};
 use crate::query_session::QuerySession;
@@ -18,7 +19,9 @@ use datafusion_common::arrow::record_batch::RecordBatch;
 use log::{info, trace};
 use parquet::arrow::ArrowWriter;
 use parquet::data_type::AsBytes;
+use parquet::errors::ParquetError;
 use parquet::file::metadata::KeyValue;
+use parquet::file::reader::{FileReader, SerializedFileReader};
 use query::boolean_query;
 use serde::{Deserialize, Serialize};
 use stable_deref_trait::StableDeref;
@@ -799,8 +802,8 @@ fn main() -> Result<()> {
     );
     let batch = RecordBatch::try_new(schema.clone(), vec![title_array, body_array])?;
 
-    let path = PathBuf::from("fat.parquet");
-    let file = File::create(&path)?;
+    let saved_path = PathBuf::from("fat.parquet");
+    let file = File::create(&saved_path)?;
 
     let mut writer = ArrowWriter::try_new(file, schema.clone(), None)?;
 
@@ -826,7 +829,33 @@ fn main() -> Result<()> {
     ));
 
     writer.close()?;
-    info!("Wrote Parquet file to: {}", path.display());
+    info!("Wrote Parquet file to: {}", saved_path.display());
+
+    // +----------------------------------------+
+    // | Read Full-Text Index from Parquet file |
+    // +----------------------------------------+
+
+    let file = File::open(&saved_path)?;
+
+    let reader = SerializedFileReader::new(file.try_clone()?)?;
+    let meta = reader.metadata().file_metadata();
+
+    let kvs = meta.key_value_metadata().ok_or_else(|| {
+        ParquetMetadata("Could not find key_value_metadata in FileMetadata".to_string())
+    })?;
+    let kv = kvs
+        .iter()
+        .find(|kv| kv.key == FULL_TEXT_INDEX_KEY)
+        .ok_or(ParquetMetadata(format!(
+            "Could not find key:{FULL_TEXT_INDEX_KEY} in key_value_metadata",
+        )))?;
+    let offset = kv
+        .value
+        .as_deref()
+        .ok_or_else(|| ParquetError::General("Missing index offset".into()))?
+        .parse::<u64>()
+        .map_err(|e| ParquetError::General(e.to_string()))?;
+    info!("Index {FULL_TEXT_INDEX_KEY} offset: {offset}");
 
     Ok(())
 }

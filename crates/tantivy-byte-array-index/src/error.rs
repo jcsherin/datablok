@@ -23,6 +23,9 @@ pub enum Error {
 
     #[error("Parquet error: {0}")]
     Parquet(#[from] parquet::errors::ParquetError),
+
+    #[error("Parquet Metadata error: {0}")]
+    ParquetMetadata(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
