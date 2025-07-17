@@ -398,11 +398,12 @@ impl InnerDirectory {
         let mut fs = std::collections::HashMap::new();
 
         for (id, file_metadata) in header.file_metadata_list.iter().enumerate() {
-            let range = (file_metadata.data_offset as usize)
-                ..((file_metadata.data_offset
-                    + file_metadata.data_content_len
-                    + file_metadata.data_footer_len as u64) as usize);
-            trace!("[{id}] Range: {}..{}", range.start, range.end);
+            let range_start = file_metadata.data_offset as usize;
+            let range_end = range_start
+                + file_metadata.data_content_len as usize
+                + file_metadata.data_footer_len as usize;
+            let range = range_start..range_end;
+            trace!("[{id}] {range:?}");
 
             let sub_data_block = data_block.slice_from(range); // zero-copy slice
 
