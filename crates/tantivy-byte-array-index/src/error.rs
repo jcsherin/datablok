@@ -26,6 +26,9 @@ pub enum Error {
 
     #[error("Parquet Metadata error: {0}")]
     ParquetMetadata(String),
+
+    #[error("DataFusion error: {0}")]
+    DataFusion(#[from] datafusion_common::DataFusionError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

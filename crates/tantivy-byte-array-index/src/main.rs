@@ -12,10 +12,20 @@ use crate::error::Error::ParquetMetadata;
 use crate::error::Result;
 use crate::index::{ImmutableIndex, IndexBuilder};
 use crate::query_session::QuerySession;
+use async_trait::async_trait;
 use crc32fast::Hasher;
+use datafusion::prelude::SessionContext;
+use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::arrow::array::{ArrayRef, StringArray};
-use datafusion_common::arrow::datatypes::{DataType, Field, Schema};
+use datafusion_common::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion_common::arrow::record_batch::RecordBatch;
+use datafusion_datasource::PartitionedFile;
+use datafusion_datasource::source::DataSourceExec;
+use datafusion_datasource_parquet::source::ParquetSource;
+use datafusion_execution::object_store::ObjectStoreUrl;
+use datafusion_expr::TableType;
+use datafusion_expr::expr::Expr;
+use datafusion_physical_plan::execution_plan::ExecutionPlan;
 use log::{info, trace};
 use parquet::arrow::ArrowWriter;
 use parquet::data_type::AsBytes;
@@ -25,6 +35,7 @@ use parquet::file::reader::{FileReader, SerializedFileReader};
 use query::boolean_query;
 use serde::{Deserialize, Serialize};
 use stable_deref_trait::StableDeref;
+use std::any::Any;
 use std::ffi::OsStr;
 use std::fmt::{Debug, Formatter};
 use std::fs::File;
@@ -528,20 +539,25 @@ impl TerminatingWrite for NoopWriter {
     }
 }
 
-#[allow(dead_code)]
 struct FullTextIndex {
     path: PathBuf,
     index: Index,
+    arrow_schema: SchemaRef,
 }
 
 impl FullTextIndex {
-    fn try_open(path: &Path, schema: Arc<tantivy::schema::Schema>) -> Result<Self> {
+    fn try_open(
+        path: &Path,
+        tantivy_schema: Arc<tantivy::schema::Schema>,
+        arrow_schema: SchemaRef,
+    ) -> Result<Self> {
         let dir = Self::try_read_directory(path)?;
-        let index = Index::open_or_create(dir, schema.as_ref().clone())?;
+        let index = Index::open_or_create(dir, tantivy_schema.as_ref().clone())?;
 
         Ok(Self {
             path: path.to_path_buf(),
             index,
+            arrow_schema,
         })
     }
 
@@ -590,6 +606,56 @@ impl FullTextIndex {
             .map_err(|e| ParquetError::General(e.to_string()))?;
 
         Ok(index_offset)
+    }
+}
+
+impl Debug for FullTextIndex {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FullTextIndex")
+            .field("path", &self.path)
+            .field("index", &self.index)
+            .field("arrow_schema", &self.arrow_schema)
+            .finish()
+    }
+}
+
+#[async_trait]
+impl TableProvider for FullTextIndex {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn schema(&self) -> SchemaRef {
+        self.arrow_schema.clone()
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::Base
+    }
+
+    async fn scan(
+        &self,
+        _state: &dyn Session,
+        _projection: Option<&Vec<usize>>,
+        _filters: &[Expr],
+        _limit: Option<usize>,
+    ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+        let object_store_url = ObjectStoreUrl::local_filesystem();
+        let source = Arc::new(ParquetSource::default().with_enable_page_index(true));
+
+        let mut builder = datafusion_datasource::file_scan_config::FileScanConfigBuilder::new(
+            object_store_url,
+            self.schema().clone(),
+            source,
+        );
+
+        let absolute_path = std::fs::canonicalize(&self.path)?;
+        let len = std::fs::metadata(&absolute_path)?.len();
+        let partitioned_file = PartitionedFile::new(absolute_path.to_string_lossy(), len);
+
+        builder = builder.with_file(partitioned_file);
+
+        Ok(DataSourceExec::from_data_source(builder.build()))
     }
 }
 
@@ -642,7 +708,8 @@ fn run_search_queries(query_session: &QuerySession, doc_mapper: &DocMapper) -> R
 const TANTIVY_METADATA_PATH: &str = "meta.json";
 const FULL_TEXT_INDEX_KEY: &str = "tantivy_index_offset";
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     setup_logging();
 
     let config = Config::default();
@@ -853,7 +920,7 @@ fn main() -> Result<()> {
     let title_field = Field::new("title", DataType::Utf8, true);
     let body_field = Field::new("body", DataType::Utf8, true);
 
-    let arrow_schema = Arc::new(Schema::new(vec![title_field, body_field]));
+    let arrow_schema_ref = Arc::new(Schema::new(vec![title_field, body_field]));
 
     let title_array: ArrayRef = Arc::new(
         examples()
@@ -867,12 +934,12 @@ fn main() -> Result<()> {
             .map(|doc| doc.body())
             .collect::<StringArray>(),
     );
-    let batch = RecordBatch::try_new(arrow_schema.clone(), vec![title_array, body_array])?;
+    let batch = RecordBatch::try_new(arrow_schema_ref.clone(), vec![title_array, body_array])?;
 
     let saved_path = PathBuf::from("fat.parquet");
     let file = File::create(&saved_path)?;
 
-    let mut writer = ArrowWriter::try_new(file, arrow_schema.clone(), None)?;
+    let mut writer = ArrowWriter::try_new(file, arrow_schema_ref.clone(), None)?;
 
     writer.write(&batch)?;
     writer.flush()?;
@@ -946,7 +1013,16 @@ fn main() -> Result<()> {
     info!(">>> Querying full-text index embedded within Parquet");
     run_search_queries(&query_session, &doc_mapper)?;
 
-    let _ = FullTextIndex::try_open(&saved_path, schema.clone());
+    let provider = Arc::new(FullTextIndex::try_open(
+        &saved_path,
+        schema.clone(),
+        arrow_schema_ref.clone(),
+    )?);
+    let ctx = SessionContext::new();
+    ctx.register_table("t", provider)?;
+
+    let df = ctx.sql("SELECT * FROM t").await?;
+    df.show().await?;
 
     Ok(())
 }
