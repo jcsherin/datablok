@@ -1,4 +1,5 @@
 use crate::error::Result;
+use std::sync::Arc;
 use tantivy::schema::{Field, Schema};
 
 pub struct Config {
@@ -26,7 +27,7 @@ pub struct SchemaFields {
 }
 
 impl SchemaFields {
-    pub fn new(schema: &Schema, config: &Config) -> Result<Self> {
+    pub fn new(schema: Arc<Schema>, config: &Config) -> Result<Self> {
         Ok(Self {
             id: schema.get_field(config.id_field_name.as_str())?,
             title: schema.get_field(config.title_field_name.as_str())?,

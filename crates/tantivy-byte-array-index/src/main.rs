@@ -581,12 +581,12 @@ fn main() -> Result<()> {
     setup_logging();
 
     let config = Config::default();
-    let schema = DocSchema::new(&config).into_schema();
+    let schema = Arc::new(DocSchema::new(&config).into_schema());
     let original_docs = examples();
 
-    let fields = SchemaFields::new(&schema, &config)?;
+    let fields = SchemaFields::new(schema.clone(), &config)?;
 
-    let index = IndexBuilder::new(schema)
+    let index = IndexBuilder::new(schema.clone())
         .index_and_commit(
             config.index_writer_memory_budget_in_bytes,
             &fields,
@@ -761,8 +761,7 @@ fn main() -> Result<()> {
     let archive_dir = ReadOnlyArchiveDirectory::new(roundtrip_header, data_block);
     trace!("Read-only Archive Directory:{archive_dir:?}");
 
-    let schema = DocSchema::new(&config).into_schema();
-    let read_only_index = Index::open_or_create(archive_dir, schema)?;
+    let read_only_index = Index::open_or_create(archive_dir, schema.as_ref().clone())?;
     let index_wrapper = ImmutableIndex::new(read_only_index);
 
     // +---------------------------+
@@ -789,7 +788,7 @@ fn main() -> Result<()> {
     let title_field = Field::new("title", DataType::Utf8, true);
     let body_field = Field::new("body", DataType::Utf8, true);
 
-    let schema = Arc::new(Schema::new(vec![title_field, body_field]));
+    let arrow_schema = Arc::new(Schema::new(vec![title_field, body_field]));
 
     let title_array: ArrayRef = Arc::new(
         examples()
@@ -803,12 +802,12 @@ fn main() -> Result<()> {
             .map(|doc| doc.body())
             .collect::<StringArray>(),
     );
-    let batch = RecordBatch::try_new(schema.clone(), vec![title_array, body_array])?;
+    let batch = RecordBatch::try_new(arrow_schema.clone(), vec![title_array, body_array])?;
 
     let saved_path = PathBuf::from("fat.parquet");
     let file = File::create(&saved_path)?;
 
-    let mut writer = ArrowWriter::try_new(file, schema.clone(), None)?;
+    let mut writer = ArrowWriter::try_new(file, arrow_schema.clone(), None)?;
 
     writer.write(&batch)?;
     writer.flush()?;
@@ -873,8 +872,7 @@ fn main() -> Result<()> {
 
     let index_dir = ReadOnlyArchiveDirectory::new(index_header, index_data);
 
-    let schema = DocSchema::new(&config).into_schema();
-    let read_only_index = Index::open_or_create(index_dir, schema)?;
+    let read_only_index = Index::open_or_create(index_dir, schema.as_ref().clone())?;
     let index_wrapper = ImmutableIndex::new(read_only_index);
 
     let query_session = QuerySession::new(&index_wrapper)?;

@@ -1,6 +1,7 @@
 use crate::common::SchemaFields;
 use crate::doc::Doc;
 use crate::error::Result;
+use std::sync::Arc;
 use tantivy::directory::ManagedDirectory;
 use tantivy::schema::Schema;
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument};
@@ -10,9 +11,9 @@ pub struct IndexBuilder {
 }
 
 impl IndexBuilder {
-    pub fn new(schema: Schema) -> Self {
+    pub fn new(schema: Arc<Schema>) -> Self {
         Self {
-            index: Index::create_in_ram(schema),
+            index: Index::create_in_ram(schema.as_ref().clone()),
         }
     }
 
