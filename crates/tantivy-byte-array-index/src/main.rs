@@ -528,6 +528,71 @@ impl TerminatingWrite for NoopWriter {
     }
 }
 
+#[allow(dead_code)]
+struct FullTextIndex {
+    path: PathBuf,
+    index: Index,
+}
+
+impl FullTextIndex {
+    fn try_open(path: &Path, schema: Arc<tantivy::schema::Schema>) -> Result<Self> {
+        let dir = Self::try_read_directory(path)?;
+        let index = Index::open_or_create(dir, schema.as_ref().clone())?;
+
+        Ok(Self {
+            path: path.to_path_buf(),
+            index,
+        })
+    }
+
+    fn try_read_directory(path: &Path) -> Result<ReadOnlyArchiveDirectory> {
+        let mut file = File::open(path)?;
+
+        let reader = SerializedFileReader::new(file.try_clone()?)?;
+
+        let index_offset = Self::try_index_offset(path, reader)?;
+
+        file.seek(SeekFrom::Start(index_offset))?;
+        let serialized_header = Header::from_reader(&file)?;
+
+        let mut data_block_buffer = vec![0u8; serialized_header.total_data_block_size as usize];
+        file.read_exact(&mut data_block_buffer)?;
+        let serialized_data = DataBlock::new(data_block_buffer);
+
+        Ok(ReadOnlyArchiveDirectory::new(
+            serialized_header,
+            serialized_data,
+        ))
+    }
+
+    fn try_index_offset(path: &Path, reader: SerializedFileReader<File>) -> Result<u64> {
+        let index_offset = reader
+            .metadata()
+            .file_metadata()
+            .key_value_metadata()
+            .ok_or_else(|| {
+                ParquetError::General(format!(
+                    "Could not find key_value_metadata in file: {}",
+                    path.display()
+                ))
+            })?
+            .iter()
+            .find(|kv| kv.key == FULL_TEXT_INDEX_KEY)
+            .and_then(|kv| kv.value.as_deref())
+            .ok_or_else(|| {
+                ParquetError::General(format!(
+                    "Could not find a valid value for key `{}` in file {}",
+                    FULL_TEXT_INDEX_KEY,
+                    path.display()
+                ))
+            })?
+            .parse::<u64>()
+            .map_err(|e| ParquetError::General(e.to_string()))?;
+
+        Ok(index_offset)
+    }
+}
+
 fn run_search_queries(query_session: &QuerySession, doc_mapper: &DocMapper) -> Result<()> {
     let print_search_results = |query| -> Result<()> {
         let results = query_session.search(query, &DocSetCollector)?;
@@ -880,6 +945,8 @@ fn main() -> Result<()> {
 
     info!(">>> Querying full-text index embedded within Parquet");
     run_search_queries(&query_session, &doc_mapper)?;
+
+    let _ = FullTextIndex::try_open(&saved_path, schema.clone());
 
     Ok(())
 }
