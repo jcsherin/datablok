@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use crc32fast::Hasher;
 use datafusion::prelude::SessionContext;
 use datafusion_catalog::{Session, TableProvider};
+use datafusion_common::ScalarValue;
 use datafusion_common::arrow::array::{ArrayRef, StringArray};
 use datafusion_common::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion_common::arrow::record_batch::RecordBatch;
@@ -640,6 +641,37 @@ impl TableProvider for FullTextIndex {
         filters: &[Expr],
         _limit: Option<usize>,
     ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+        let mut phrase: Option<&str> = None;
+
+        // Currently handles only a single wildcard LIKE query on the `title` column. A generalized
+        // implementation will use: [`PruningPredicate`]
+        //
+        // [`PruningPredicate`]: https://docs.rs/datafusion/latest/datafusion/physical_optimizer/pruning/struct.PruningPredicate.html
+        if filters.len() == 1 {
+            if let Expr::Like(like) = filters.first().unwrap() {
+                if !like.negated {
+                    if let (
+                        Expr::Column(col),
+                        Expr::Literal(ScalarValue::Utf8(Some(pattern)), None),
+                    ) = (&*like.expr, &*like.pattern)
+                    {
+                        info!("Column: {}, Pattern: {pattern}", col.name);
+                        if col.name == "title" {
+                            if let Some(inner) =
+                                pattern.strip_prefix('%').and_then(|s| s.strip_suffix('%'))
+                            {
+                                phrase = Some(inner);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(inner) = phrase {
+            info!("phrase: {inner}");
+        }
+
         let object_store_url = ObjectStoreUrl::local_filesystem();
         let source = Arc::new(ParquetSource::default().with_enable_page_index(true));
 
@@ -654,8 +686,6 @@ impl TableProvider for FullTextIndex {
         let partitioned_file = PartitionedFile::new(absolute_path.to_string_lossy(), len);
 
         builder = builder.with_file(partitioned_file);
-
-        info!("filters: {filters:?}");
 
         Ok(DataSourceExec::from_data_source(builder.build()))
     }
