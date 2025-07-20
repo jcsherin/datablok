@@ -16,10 +16,10 @@ use async_trait::async_trait;
 use crc32fast::Hasher;
 use datafusion::prelude::SessionContext;
 use datafusion_catalog::{Session, TableProvider};
-use datafusion_common::ScalarValue;
 use datafusion_common::arrow::array::{ArrayRef, StringArray};
 use datafusion_common::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion_common::arrow::record_batch::RecordBatch;
+use datafusion_common::{DataFusionError, ScalarValue};
 use datafusion_datasource::PartitionedFile;
 use datafusion_datasource::source::DataSourceExec;
 use datafusion_datasource_parquet::source::ParquetSource;
@@ -51,7 +51,9 @@ use tantivy::directory::{
     AntiCallToken, FileHandle, FileSlice, OwnedBytes, TerminatingWrite, WatchCallback, WatchHandle,
     WritePtr,
 };
-use tantivy::{Directory, HasLen, INDEX_FORMAT_VERSION, Index};
+use tantivy::query::{PhraseQuery, Query};
+use tantivy::schema::{Schema as IndexSchema, Value};
+use tantivy::{Directory, HasLen, INDEX_FORMAT_VERSION, Index, TantivyDocument, Term};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 struct FileMetadata {
@@ -543,21 +545,23 @@ impl TerminatingWrite for NoopWriter {
 struct FullTextIndex {
     path: PathBuf,
     index: Index,
+    index_schema: Arc<IndexSchema>,
     arrow_schema: SchemaRef,
 }
 
 impl FullTextIndex {
     fn try_open(
         path: &Path,
-        tantivy_schema: Arc<tantivy::schema::Schema>,
+        index_schema: Arc<IndexSchema>,
         arrow_schema: SchemaRef,
     ) -> Result<Self> {
         let dir = Self::try_read_directory(path)?;
-        let index = Index::open_or_create(dir, tantivy_schema.as_ref().clone())?;
+        let index = Index::open_or_create(dir, index_schema.as_ref().clone())?;
 
         Ok(Self {
             path: path.to_path_buf(),
             index,
+            index_schema,
             arrow_schema,
         })
     }
@@ -670,6 +674,42 @@ impl TableProvider for FullTextIndex {
 
         if let Some(inner) = phrase {
             info!("phrase: {inner}");
+
+            let title_field = self
+                .index_schema
+                .get_field("title")
+                .map_err(|e| DataFusionError::External(e.into()))?;
+            let id_field = self
+                .index_schema
+                .get_field("id")
+                .map_err(|e| DataFusionError::External(e.into()))?;
+            let title_phrase_query = Box::new(PhraseQuery::new(
+                inner
+                    .split_whitespace()
+                    .map(|s| Term::from_field_text(title_field, s))
+                    .collect(),
+            )) as Box<dyn Query>;
+
+            let reader = self
+                .index
+                .reader()
+                .map_err(|e| DataFusionError::External(e.into()))?;
+            let searcher = reader.searcher();
+
+            if let Ok(matches) = searcher.search(&*title_phrase_query, &DocSetCollector) {
+                let parquet_row_ids = matches
+                    .iter()
+                    .filter_map(|doc_address| {
+                        searcher
+                            .doc::<TantivyDocument>(*doc_address)
+                            .ok()? // discard the error if doc doesn't exist in the index
+                            .get_first(id_field)
+                            .and_then(|v| v.as_u64())
+                    })
+                    .collect::<Vec<_>>();
+
+                info!("Matching parquet row ids: {parquet_row_ids:?}");
+            }
         }
 
         let object_store_url = ObjectStoreUrl::local_filesystem();
