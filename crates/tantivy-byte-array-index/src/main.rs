@@ -23,8 +23,8 @@ use datafusion_datasource::PartitionedFile;
 use datafusion_datasource::source::DataSourceExec;
 use datafusion_datasource_parquet::source::ParquetSource;
 use datafusion_execution::object_store::ObjectStoreUrl;
-use datafusion_expr::TableType;
 use datafusion_expr::expr::Expr;
+use datafusion_expr::{TableProviderFilterPushDown, TableType};
 use datafusion_physical_plan::execution_plan::ExecutionPlan;
 use log::{info, trace};
 use parquet::arrow::ArrowWriter;
@@ -637,7 +637,7 @@ impl TableProvider for FullTextIndex {
         &self,
         _state: &dyn Session,
         _projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
+        filters: &[Expr],
         _limit: Option<usize>,
     ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
         let object_store_url = ObjectStoreUrl::local_filesystem();
@@ -655,7 +655,16 @@ impl TableProvider for FullTextIndex {
 
         builder = builder.with_file(partitioned_file);
 
+        info!("filters: {filters:?}");
+
         Ok(DataSourceExec::from_data_source(builder.build()))
+    }
+
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> datafusion_common::Result<Vec<TableProviderFilterPushDown>> {
+        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
     }
 }
 
@@ -1021,7 +1030,9 @@ async fn main() -> Result<()> {
     let ctx = SessionContext::new();
     ctx.register_table("t", provider)?;
 
-    let df = ctx.sql("SELECT * FROM t").await?;
+    let sql = "SELECT * FROM t where title LIKE '%dairy cow%'";
+    info!("Executing Query: {sql}");
+    let df = ctx.sql(sql).await?;
     df.show().await?;
 
     Ok(())
