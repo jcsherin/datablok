@@ -14,6 +14,7 @@ use crate::index::{ImmutableIndex, IndexBuilder};
 use crate::query_session::QuerySession;
 use async_trait::async_trait;
 use crc32fast::Hasher;
+use datafusion::arrow::array::UInt64Array;
 use datafusion::prelude::SessionContext;
 use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::arrow::array::{ArrayRef, StringArray};
@@ -996,11 +997,18 @@ async fn main() -> Result<()> {
     // file size is now larger because of the embedded full text index. This is backwards compatible
     // with readers who will skip the index embedded within the file.
 
+    let id_field = Field::new("id", DataType::UInt64, false);
     let title_field = Field::new("title", DataType::Utf8, true);
     let body_field = Field::new("body", DataType::Utf8, true);
 
-    let arrow_schema_ref = Arc::new(Schema::new(vec![title_field, body_field]));
+    let arrow_schema_ref = Arc::new(Schema::new(vec![id_field, title_field, body_field]));
 
+    let id_array: ArrayRef = Arc::new(
+        examples()
+            .iter()
+            .map(|doc| doc.id())
+            .collect::<UInt64Array>(),
+    );
     let title_array: ArrayRef = Arc::new(
         examples()
             .iter()
@@ -1013,7 +1021,10 @@ async fn main() -> Result<()> {
             .map(|doc| doc.body())
             .collect::<StringArray>(),
     );
-    let batch = RecordBatch::try_new(arrow_schema_ref.clone(), vec![title_array, body_array])?;
+    let batch = RecordBatch::try_new(
+        arrow_schema_ref.clone(),
+        vec![id_array, title_array, body_array],
+    )?;
 
     let saved_path = PathBuf::from("fat.parquet");
     let file = File::create(&saved_path)?;
