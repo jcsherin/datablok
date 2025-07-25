@@ -1105,6 +1105,9 @@ async fn main() -> Result<()> {
     let df = ctx.sql(sql).await?;
     df.show().await?;
 
+    let df = ctx.sql(sql).await?;
+    df.explain(false, false)?.show().await?;
+
     Ok(())
 }
 
