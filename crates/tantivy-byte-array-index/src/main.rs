@@ -15,18 +15,19 @@ use crate::query_session::QuerySession;
 use async_trait::async_trait;
 use crc32fast::Hasher;
 use datafusion::arrow::array::UInt64Array;
+use datafusion::physical_expr::create_physical_expr;
 use datafusion::prelude::SessionContext;
 use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::arrow::array::{ArrayRef, StringArray};
 use datafusion_common::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion_common::arrow::record_batch::RecordBatch;
-use datafusion_common::{DataFusionError, ScalarValue};
+use datafusion_common::{DFSchema, DataFusionError, ScalarValue};
 use datafusion_datasource::PartitionedFile;
-use datafusion_datasource::source::DataSourceExec;
+use datafusion_datasource::source::{DataSource, DataSourceExec};
 use datafusion_datasource_parquet::source::ParquetSource;
 use datafusion_execution::object_store::ObjectStoreUrl;
 use datafusion_expr::expr::Expr;
-use datafusion_expr::{TableProviderFilterPushDown, TableType};
+use datafusion_expr::{TableProviderFilterPushDown, TableType, col, lit};
 use datafusion_physical_plan::execution_plan::ExecutionPlan;
 use log::{info, trace};
 use parquet::arrow::ArrowWriter;
@@ -641,7 +642,7 @@ impl TableProvider for FullTextIndex {
 
     async fn scan(
         &self,
-        _state: &dyn Session,
+        state: &dyn Session,
         _projection: Option<&Vec<usize>>,
         filters: &[Expr],
         _limit: Option<usize>,
@@ -673,6 +674,7 @@ impl TableProvider for FullTextIndex {
             }
         }
 
+        let mut matching_doc_ids = Vec::new();
         if let Some(inner) = phrase {
             info!("phrase: {inner}");
 
@@ -698,7 +700,7 @@ impl TableProvider for FullTextIndex {
             let searcher = reader.searcher();
 
             if let Ok(matches) = searcher.search(&*title_phrase_query, &DocSetCollector) {
-                let parquet_row_ids = matches
+                let matched_ids = matches
                     .iter()
                     .filter_map(|doc_address| {
                         searcher
@@ -709,9 +711,21 @@ impl TableProvider for FullTextIndex {
                     })
                     .collect::<Vec<_>>();
 
-                info!("Matching parquet row ids: {parquet_row_ids:?}");
+                matching_doc_ids.extend(matched_ids);
             }
         }
+
+        info!("Matching doc ids from full-text index: {matching_doc_ids:?}");
+
+        // constructing the `id IN (...)` expression to pushdown into parquet file
+        let ids: Vec<Expr> = matching_doc_ids.iter().map(|doc_id| lit(*doc_id)).collect();
+        let id_filter = col("id").in_list(ids, false);
+        info!("filter expr: {id_filter}");
+
+        let df_schema = DFSchema::try_from(self.arrow_schema.clone())?;
+        let physical_predicate =
+            create_physical_expr(&id_filter, &df_schema, state.execution_props())?;
+        info!("physical expr: {physical_predicate}");
 
         let object_store_url = ObjectStoreUrl::local_filesystem();
         let source = Arc::new(ParquetSource::default().with_enable_page_index(true));
@@ -728,14 +742,24 @@ impl TableProvider for FullTextIndex {
 
         builder = builder.with_file(partitioned_file);
 
-        Ok(DataSourceExec::from_data_source(builder.build()))
+        let file_scan_config = builder.build();
+        if let Some(filtered_data_source) = file_scan_config
+            .try_pushdown_filters(vec![physical_predicate], state.config_options())?
+            .updated_node
+        {
+            Ok(Arc::new(DataSourceExec::new(filtered_data_source)))
+        } else {
+            Err(DataFusionError::Internal(
+                "Filter pushdown was not applied by the Parquet source.".to_string(),
+            ))
+        }
     }
 
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
     ) -> datafusion_common::Result<Vec<TableProviderFilterPushDown>> {
-        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
+        Ok(vec![TableProviderFilterPushDown::Exact; filters.len()])
     }
 }
 
