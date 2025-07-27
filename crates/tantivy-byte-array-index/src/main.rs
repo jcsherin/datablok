@@ -23,7 +23,8 @@ use datafusion_common::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion_common::arrow::record_batch::RecordBatch;
 use datafusion_common::{DFSchema, DataFusionError, ScalarValue};
 use datafusion_datasource::PartitionedFile;
-use datafusion_datasource::source::{DataSource, DataSourceExec};
+use datafusion_datasource::file_scan_config::FileScanConfigBuilder;
+use datafusion_datasource::source::DataSourceExec;
 use datafusion_datasource_parquet::source::ParquetSource;
 use datafusion_execution::object_store::ObjectStoreUrl;
 use datafusion_expr::expr::Expr;
@@ -728,31 +729,23 @@ impl TableProvider for FullTextIndex {
         info!("physical expr: {physical_predicate}");
 
         let object_store_url = ObjectStoreUrl::local_filesystem();
-        let source = Arc::new(ParquetSource::default().with_enable_page_index(true));
-
-        let mut builder = datafusion_datasource::file_scan_config::FileScanConfigBuilder::new(
-            object_store_url,
-            self.schema().clone(),
-            source,
+        let source = Arc::new(
+            ParquetSource::default()
+                .with_enable_page_index(true)
+                .with_predicate(physical_predicate)
+                .with_pushdown_filters(true),
         );
 
         let absolute_path = std::fs::canonicalize(&self.path)?;
         let len = std::fs::metadata(&absolute_path)?.len();
         let partitioned_file = PartitionedFile::new(absolute_path.to_string_lossy(), len);
 
-        builder = builder.with_file(partitioned_file);
+        let file_scan_config =
+            FileScanConfigBuilder::new(object_store_url, self.schema().clone(), source)
+                .with_file(partitioned_file)
+                .build();
 
-        let file_scan_config = builder.build();
-        if let Some(filtered_data_source) = file_scan_config
-            .try_pushdown_filters(vec![physical_predicate], state.config_options())?
-            .updated_node
-        {
-            Ok(Arc::new(DataSourceExec::new(filtered_data_source)))
-        } else {
-            Err(DataFusionError::Internal(
-                "Filter pushdown was not applied by the Parquet source.".to_string(),
-            ))
-        }
+        Ok(Arc::new(DataSourceExec::new(Arc::new(file_scan_config))))
     }
 
     fn supports_filters_pushdown(
