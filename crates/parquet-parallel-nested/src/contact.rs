@@ -1,17 +1,17 @@
-use crate::datagen::{generate_name, get_num_phones, get_phone_template};
+use crate::skew::{generate_name, generate_phone_template, generate_phones_count};
 use arrow::array::{
     ListBuilder, RecordBatch, StringBuilder, StringDictionaryBuilder, StructBuilder,
 };
 use arrow::datatypes::{SchemaRef, UInt8Type};
 use parquet_common::prelude::{
-    get_contact_phone_fields, PHONE_NUMBER_FIELD_INDEX, PHONE_TYPE_FIELD_INDEX,
+    PHONE_NUMBER_FIELD_INDEX, PHONE_TYPE_FIELD_INDEX, get_contact_phone_fields,
 };
-use rand::prelude::StdRng;
 use rand::SeedableRng;
+use rand::prelude::StdRng;
 use std::error::Error;
 use std::fmt::Write;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[derive(Debug)]
 pub struct ContactRecordBatchGenerator {
     schema: SchemaRef,
@@ -42,7 +42,7 @@ impl ContactRecordBatchGenerator {
         for _ in 0..count {
             name.append_option(generate_name(rng, &mut name_buf));
 
-            let phones_count = get_num_phones(rng);
+            let phones_count = generate_phones_count(rng);
             if phones_count == 0 {
                 phones.append_null();
             } else {
@@ -51,7 +51,7 @@ impl ContactRecordBatchGenerator {
                 for _ in 0..phones_count {
                     builder.append(true);
 
-                    let (has_number, phone_type) = get_phone_template(rng);
+                    let (has_number, phone_type) = generate_phone_template(rng);
 
                     let phone_number_builder = builder
                         .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
@@ -94,12 +94,12 @@ impl ContactRecordBatchGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Array, AsArray};
+    use arrow::array::Array;
     use parquet_common::prelude::get_contact_schema;
     use std::sync::atomic::AtomicUsize;
 
     #[test]
-    fn test_generate_basic() {
+    fn test_generator_basic() {
         let schema = get_contact_schema();
         let counter = Arc::new(AtomicUsize::new(0));
         let mut generator = ContactRecordBatchGenerator::new(schema.clone(), counter);
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_seed_consistency() {
+    fn test_generator_reproducibility() {
         let schema = get_contact_schema();
         let shared_counter = Arc::new(AtomicUsize::new(0));
 
@@ -133,8 +133,8 @@ mod tests {
         assert_eq!(batch1.schema(), batch2.schema());
 
         for i in 0..batch1.num_columns() {
-            // Skip name column (index 0) as it uses `fake` crate which might not be deterministic
-            // across separate `StdRng` instances even with the same seed.
+            // Skip name column (index 0) as it uses `fake` crate which is not deterministic across
+            // separate `StdRng` instances.
             if i == 0 {
                 continue;
             }
@@ -145,16 +145,15 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_large_count() {
+    fn test_generator_large_batch() {
         let schema = get_contact_schema();
         let counter = Arc::new(AtomicUsize::new(0));
         let mut generator = ContactRecordBatchGenerator::new(schema, counter);
 
-        let count = 100000; // Large count
+        let count = 100000;
         let batch = generator.generate(0, count).unwrap();
 
         assert_eq!(batch.num_rows(), count);
-        // Basic check to ensure it doesn't panic or run out of memory immediately
         assert!(batch.column(0).len() > 0);
     }
 }

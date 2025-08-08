@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use parquet_parallel_nested::datagen::generate_name;
-use parquet_parallel_nested::datagen::get_phone_template;
+use parquet_parallel_nested::skew::generate_name;
+use parquet_parallel_nested::skew::generate_phone_template;
 use rand::SeedableRng;
 use rand::prelude::StdRng;
 use std::hint::black_box;
@@ -20,7 +20,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     group.bench_function("generate phones struct template", |b| {
-        b.iter(|| black_box(get_phone_template(rng)))
+        b.iter(|| black_box(generate_phone_template(rng)))
     });
 }
 
