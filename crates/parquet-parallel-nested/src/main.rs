@@ -1,100 +1,16 @@
-use arrow::array::{ListBuilder, StringBuilder, StringDictionaryBuilder, StructBuilder};
-use arrow::datatypes::{SchemaRef, UInt8Type};
 use arrow::record_batch::RecordBatch;
 use human_format::Formatter;
 use log::{LevelFilter, info};
 use parquet::arrow::ArrowWriter;
 use parquet_common::prelude::*;
-use parquet_parallel_nested::datagen::{generate_name, get_num_phones, get_phone_template};
-use rand::SeedableRng;
-use rand::prelude::StdRng;
+use parquet_parallel_nested::generator::ContactRecordBatchGenerator;
 use rayon::prelude::*;
 use std::error::Error;
-use std::fmt::{Debug, Write};
 use std::fs::File;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Instant;
-
-#[derive(Debug)]
-struct RecordBatchGenerator {
-    schema: SchemaRef,
-    counter: Arc<AtomicUsize>,
-}
-
-impl RecordBatchGenerator {
-    const PHONE_NUMBER_LENGTH: usize = 16;
-
-    fn new(schema: SchemaRef, counter: Arc<AtomicUsize>) -> Self {
-        RecordBatchGenerator { schema, counter }
-    }
-
-    fn get(&mut self, seed: u64, count: usize) -> Result<RecordBatch, Box<dyn Error>> {
-        let mut name = StringBuilder::new();
-        let phone_type = StringDictionaryBuilder::<UInt8Type>::new();
-        let phone_number = StringBuilder::new();
-        let mut phone_number_buf = String::with_capacity(Self::PHONE_NUMBER_LENGTH);
-        let phone = StructBuilder::new(
-            get_contact_phone_fields(),
-            vec![Box::new(phone_number), Box::new(phone_type)],
-        );
-        let mut phones = ListBuilder::new(phone);
-
-        let rng = &mut StdRng::seed_from_u64(seed);
-        let mut name_buf = String::with_capacity(32);
-
-        for _ in 0..count {
-            name.append_option(generate_name(rng, &mut name_buf));
-
-            let phones_count = get_num_phones(rng);
-            if phones_count == 0 {
-                phones.append_null();
-            } else {
-                let builder = phones.values();
-
-                for _ in 0..phones_count {
-                    builder.append(true);
-
-                    let (has_number, phone_type) = get_phone_template(rng);
-
-                    let phone_number_builder = builder
-                        .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
-                        .ok_or_else(|| {
-                            Box::<dyn Error>::from(
-                                "Expected `number` field at idx: 0 of `Phone` struct builder.",
-                            )
-                        })?;
-
-                    if has_number {
-                        let uniq_suffix = self.counter.fetch_add(1, Ordering::Relaxed);
-
-                        write!(phone_number_buf, "+91-99-{uniq_suffix:08}").unwrap();
-                        phone_number_builder.append_value(&phone_number_buf);
-
-                        phone_number_buf.clear();
-                    } else {
-                        phone_number_builder.append_option(None::<String>);
-                    }
-
-                    builder
-                        .field_builder::<StringDictionaryBuilder<UInt8Type>>(PHONE_TYPE_FIELD_INDEX)
-                        .ok_or_else(|| Box::<dyn Error>::from("Expected `phone_type` field at idx: {PHONE_TYPE_FIELD_INDEX} of `Phone` struct builder."))?
-                        .append_option(phone_type);
-                }
-
-                phones.append(true);
-            }
-        }
-
-        let rb = RecordBatch::try_new(
-            self.schema.clone(),
-            vec![Arc::new(name.finish()), Arc::new(phones.finish())],
-        )?;
-
-        Ok(rb)
-    }
-}
 
 fn create_writer_thread(
     path: &'static str,
@@ -186,7 +102,10 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         (0..num_batches).into_par_iter().for_each_init(
             || {
                 (
-                    RecordBatchGenerator::new(parquet_schema.clone(), phone_id_counter.clone()),
+                    ContactRecordBatchGenerator::new(
+                        parquet_schema.clone(),
+                        phone_id_counter.clone(),
+                    ),
                     senders.clone(),
                 )
             },
@@ -200,7 +119,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 }
 
                 let rb = generator_state
-                    .get(batch_index as u64, current_batch_size)
+                    .generate(batch_index as u64, current_batch_size)
                     .expect("Failed to generate fused record batch");
 
                 match batch_index % 4 {
