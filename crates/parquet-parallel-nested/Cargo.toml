@@ -17,3 +17,10 @@ rand = { version = "0.9.1" }
 
 [features]
 dhat-heap = ["dep:dhat"]
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "datagen"
+harness = false
