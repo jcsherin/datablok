@@ -8,8 +8,4 @@ resolver = "2"
 
 [profile.release]
 debug = "line-tables-only"
-debuginfo-level = 1
 strip = false # Retain debug info for flamegraphs
-
-[build]
-rustflags = ["-C", "force-frame-pointers=yes", "-C", "symbol-mangling-version=v0"] # Frame pointers, symbol demangling
