@@ -1,35 +1,103 @@
+//! # Skewed Data Generation
+//!
+//! This module provides functions for generating skewed, Zipfian-like data distributions.
+//! The goal is to create datasets that mimic real-world scenarios where a few values
+//! occur with high frequency, while most other values are rare (a long-tail distribution).
+//! This is useful for simulating realistic workloads.
+
 use fake::Fake;
 use fake::faker::name::en::{FirstName, LastName};
 use parquet_common::contact::PhoneType;
 use rand::Rng;
+use rand::distr::Distribution;
+use rand::distr::weighted::WeightedIndex;
 use std::fmt::Write;
 
+/// Probability distribution for generating `PhoneType` enum variants.
+///
+/// The distribution is defined by the following weights:
+/// - 55%: Mobile
+/// - 35%: Work
+/// - 10%: Home
+const PHONE_TYPE_WEIGHTS: [u32; 3] = [55, 35, 10];
+
+/// Generates a random `PhoneType` based on the `PHONE_TYPE_WEIGHTS` distribution.
 fn generate_phone_type(rng: &mut impl Rng) -> PhoneType {
-    match rng.random_range(0..100) {
-        0..=54 => PhoneType::Mobile, // 0.55
-        55..=89 => PhoneType::Work,  // 0.35
-        _ => PhoneType::Home,        // 0.10
+    let dist = WeightedIndex::new(PHONE_TYPE_WEIGHTS).unwrap();
+    match dist.sample(rng) {
+        0 => PhoneType::Mobile,
+        1 => PhoneType::Work,
+        2 => PhoneType::Home,
+        _ => unreachable!(
+            "WeightedIndex should only return indices within the bounds of PHONE_TYPE_WEIGHTS"
+        ),
     }
 }
 
+/// Probability distribution for generating the number of phones.
+///
+/// The distribution is defined by the following weights:
+/// - 40%: 0 phones
+/// - 45%: 1 phone
+/// - 10%: 2 phones
+/// -  5%: 3-5 phones
+const PHONES_COUNT_WEIGHTS: [u32; 4] = [40, 45, 10, 5];
+
+/// Generates a skewed number of phones (from 0 to 5) based on the `PHONES_COUNT_WEIGHTS` distribution.
 pub fn generate_phones_count(rng: &mut impl Rng) -> i32 {
-    match rng.random_range(0..100) {
-        0..=39 => 0,                  // 0.40
-        40..=84 => 1,                 // 0.45
-        85..=94 => 2,                 // 0.10
-        _ => rng.random_range(3..=5), // 0.05
+    let dist = WeightedIndex::new(PHONES_COUNT_WEIGHTS).unwrap();
+    match dist.sample(rng) {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        3 => rng.random_range(3..=5),
+        _ => unreachable!(
+            "WeightedIndex should only return indices within the bounds of PHONES_COUNT_WEIGHTS"
+        ),
     }
 }
 
+/// Probability distribution for generating a phone template.
+///
+/// A phone template is a tuple `(bool, Option<PhoneType>)`. It handles all the permutations of
+/// whether a phone number is present, and the `PhoneType` value.
+///
+/// The distribution is defined by the following weights:
+/// - 90%: `(true, Some(PhoneType))`
+/// -  5%: `(true, None)`
+/// -  4%: `(false, Some(PhoneType))`
+/// -  1%: `(false, None)`
+const PHONE_TEMPLATE_WEIGHTS: [u32; 4] = [90, 5, 4, 1];
+
+/// Generates a phone template based on the `PHONE_TEMPLATE_WEIGHTS` distribution.
+///
+/// A phone template is a tuple `(bool, Option<PhoneType>)` that defines the shape of a
+/// phone entry before a concrete phone number is generated. This allows for lazy
+/// initialization and gives the caller flexibility in how values are materialized.
+///
+/// The returned tuple has the following meaning:
+/// - The `bool` indicates if a phone number is present or should be generated.
+/// - The `Option<PhoneType>` specifies the category of the phone number.
+///
+/// This allows for all permutations, including representing a placeholder for a phone
+/// number that is expected but not yet available. For example, the tuple
+/// `(false, Some(PhoneType::Work))` can signify that a work phone is required for a
+/// contact but the number itself is currently missing.
 pub fn generate_phone_template(rng: &mut impl Rng) -> (bool, Option<PhoneType>) {
-    match rng.random_range(0..100) {
-        0..=89 => (true, Some(generate_phone_type(rng))), // 90%
-        90..=94 => (true, None),                          //  5%
-        95..=98 => (false, Some(generate_phone_type(rng))), //  4%
-        _ => (false, None),                               //  1%
+    let dist = WeightedIndex::new(PHONE_TEMPLATE_WEIGHTS).unwrap();
+    match dist.sample(rng) {
+        0 => (true, Some(generate_phone_type(rng))),
+        1 => (true, None),
+        2 => (false, Some(generate_phone_type(rng))),
+        _ => (false, None),
     }
 }
 
+/// Generates a fake name with an 80% probability, writing it into the provided buffer.
+///
+/// This function takes a mutable buffer `name_buf` to avoid repeated memory allocations
+/// when generating many names in a loop. The buffer is cleared after each name is
+/// generated.
 pub fn generate_name(rng: &mut impl Rng, name_buf: &mut String) -> Option<String> {
     if rng.random_bool(0.8) {
         write!(
@@ -56,6 +124,64 @@ mod tests {
     use rand::rngs::StdRng;
     use std::collections::HashMap;
 
+    /// Defines the acceptable deviation from predefined data skew in the final generated data due
+    /// to minor statistical variations between test runs.
+    ///
+    /// The 5% is small enough to catch larger deviations, and at the same time large enough to
+    /// prevent flakiness due to minor statistical variations.
+    const TOLERANCE: f64 = 0.05;
+
+    /// Asserts that the distribution of generated values matches the expected weights
+    /// within a given tolerance.
+    ///
+    /// # Arguments
+    ///
+    /// * `counts`: A `HashMap` containing the counts of generated items.
+    /// * `num_iterations`: Total number of items generated.
+    /// * `expected_weights`: A slice of `u32` weights for the distribution.
+    /// * `tolerance`: The allowed statistical deviation (e.g., 0.05 for 5%).
+    /// * `checks`: An array of tuples to check, where each tuple is
+    ///   `(value, weight_index, label)`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // First, populate a HashMap with the counts of generated items.
+    /// // (In a real test, this is done in a loop over the data generator).
+    /// let mut counts = HashMap::new();
+    /// counts.insert(PhoneType::Mobile, 55000);
+    /// counts.insert(PhoneType::Work, 35000);
+    /// counts.insert(PhoneType::Home, 10000);
+    ///
+    /// // Then, assert the distribution.
+    /// assert_distribution!(
+    ///     counts,
+    ///     100000,
+    ///     &[55, 35, 10],
+    ///     0.05,
+    ///     [
+    ///         (PhoneType::Mobile, 0, "Mobile"),
+    ///         (PhoneType::Work, 1, "Work"),
+    ///         (PhoneType::Home, 2, "Home")
+    ///     ]
+    /// );
+    /// ```
+    macro_rules! assert_distribution {
+        ($counts:expr, $num_iterations:expr, $expected_weights:expr, $tolerance:expr, [$(($value:expr, $weight_index:expr, $label:expr)),+]) => {
+            let total_weight: u32 = $expected_weights.iter().sum();
+            $(
+                let count = *$counts.get(&$value).unwrap_or(&0);
+                let actual_percent = count as f64 / $num_iterations as f64;
+                let expected_percent = $expected_weights[$weight_index] as f64 / total_weight as f64;
+                assert!(
+                    (actual_percent - expected_percent).abs() < $tolerance,
+                    "{label} distribution: {actual_percent}, expected {expected_percent}",
+                    label = $label
+                );
+            )+
+        };
+    }
+
     #[test]
     fn test_generate_phone_type_distribution() {
         let mut rng = StdRng::seed_from_u64(0);
@@ -66,34 +192,21 @@ mod tests {
             *counts.entry(generate_phone_type(&mut rng)).or_insert(0) += 1;
         }
 
-        let mobile_count = *counts.get(&PhoneType::Mobile).unwrap_or(&0);
-        let work_count = *counts.get(&PhoneType::Work).unwrap_or(&0);
-        let home_count = *counts.get(&PhoneType::Home).unwrap_or(&0);
-
-        let mobile_percent = mobile_count as f64 / num_iterations as f64;
-        let work_percent = work_count as f64 / num_iterations as f64;
-        let home_percent = home_count as f64 / num_iterations as f64;
-
-        // Allow for a 5% deviation
-        assert!(
-            mobile_percent > 0.50 && mobile_percent < 0.60,
-            "Mobile distribution: {}",
-            mobile_percent
-        );
-        assert!(
-            work_percent > 0.30 && work_percent < 0.40,
-            "Work distribution: {}",
-            work_percent
-        );
-        assert!(
-            home_percent > 0.05 && home_percent < 0.15,
-            "Home distribution: {}",
-            home_percent
+        assert_distribution!(
+            counts,
+            num_iterations,
+            &PHONE_TYPE_WEIGHTS,
+            TOLERANCE,
+            [
+                (PhoneType::Mobile, 0, "Mobile"),
+                (PhoneType::Work, 1, "Work"),
+                (PhoneType::Home, 2, "Home")
+            ]
         );
     }
 
     #[test]
-    fn test_get_num_phones_distribution() {
+    fn test_generate_phones_count_distribution() {
         let mut rng = StdRng::seed_from_u64(0);
         let mut counts = HashMap::new();
         let num_iterations = 100000;
@@ -103,49 +216,46 @@ mod tests {
             *counts.entry(num).or_insert(0) += 1;
         }
 
-        let count_0 = *counts.get(&0).unwrap_or(&0);
-        let count_1 = *counts.get(&1).unwrap_or(&0);
-        let count_2 = *counts.get(&2).unwrap_or(&0);
+        // The generated counts are for individual numbers (0-5), but the weights are for
+        // four categories (0, 1, 2, 3-5). We need to process the raw counts to match
+        // these categories before asserting the distribution.
+        let mut processed_counts = HashMap::new();
+        processed_counts.insert(0, *counts.get(&0).unwrap_or(&0));
+        processed_counts.insert(1, *counts.get(&1).unwrap_or(&0));
+        processed_counts.insert(2, *counts.get(&2).unwrap_or(&0));
         let count_3_5 = counts
             .iter()
             .filter(|&(&k, _)| k >= 3 && k <= 5)
             .map(|(_, &v)| v)
             .sum::<i32>();
+        processed_counts.insert(3, count_3_5); // Use a dummy key for the range
 
-        let percent_0 = count_0 as f64 / num_iterations as f64;
-        let percent_1 = count_1 as f64 / num_iterations as f64;
-        let percent_2 = count_2 as f64 / num_iterations as f64;
-        let percent_3_5 = count_3_5 as f64 / num_iterations as f64;
-
-        // Allow for a 5% deviation
-        assert!(
-            percent_0 > 0.35 && percent_0 < 0.45,
-            "0 phones distribution: {}",
-            percent_0
-        );
-        assert!(
-            percent_1 > 0.40 && percent_1 < 0.50,
-            "1 phone distribution: {}",
-            percent_1
-        );
-        assert!(
-            percent_2 > 0.05 && percent_2 < 0.15,
-            "2 phones distribution: {}",
-            percent_2
-        );
-        assert!(
-            percent_3_5 > 0.00 && percent_3_5 < 0.10,
-            "3-5 phones distribution: {}",
-            percent_3_5
+        assert_distribution!(
+            processed_counts,
+            num_iterations,
+            &PHONES_COUNT_WEIGHTS,
+            TOLERANCE,
+            [
+                (0, 0, "0 phones"),
+                (1, 1, "1 phone"),
+                (2, 2, "2 phones"),
+                (3, 3, "3-5 phones")
+            ]
         );
     }
 
     #[test]
-    fn test_get_phone_template_distribution() {
+    fn test_generate_phone_template_distribution() {
         let mut rng = StdRng::seed_from_u64(0);
         let mut counts: HashMap<(bool, String), i32> = HashMap::new();
         let num_iterations = 100000;
 
+        // Step 1: Collect granular counts for every possible outcome.
+        // The function under test returns a tuple `(bool, Option<PhoneType>)`. To count
+        // these outcomes, we need a way to represent the `Option<PhoneType>` in a
+        // HashMap key. We convert it to a String: `Some(PhoneType::Mobile)` becomes
+        // "Mobile", and `None` becomes "None". This allows us to have a distinct key
+        // for every specific outcome generated by the function.
         for _ in 0..num_iterations {
             let (has_number, phone_type) = generate_phone_template(&mut rng);
             let phone_type_str = match phone_type {
@@ -155,80 +265,93 @@ mod tests {
             *counts.entry((has_number, phone_type_str)).or_insert(0) += 1;
         }
 
-        let true_some_count = counts
-            .iter()
-            .filter(|&((hn, pt_str), _)| *hn && pt_str != "None")
-            .map(|(_, &v)| v)
-            .sum::<i32>();
-        let true_none_count = *counts.get(&(true, "None".to_string())).unwrap_or(&0);
-        let false_some_count = counts
-            .iter()
-            .filter(|&((hn, pt_str), _)| !*hn && pt_str != "None")
-            .map(|(_, &v)| v)
-            .sum::<i32>();
-        let false_none_count = *counts.get(&(false, "None".to_string())).unwrap_or(&0);
+        // Step 2: Group the granular counts into the four high-level categories.
+        // The `PHONE_TEMPLATE_WEIGHTS` are defined for four broad categories, but our
+        // `counts` map is more detailed. The following code sums the granular counts
+        // into a new `processed_counts` map that matches the four categories expected
+        // by the final assertion.
+        //
+        // The categories are:
+        //  - "true_some":  (true, Some(_)) -> Sum of all `(true, "Mobile")`, `(true, "Work")`, etc.
+        //  - "true_none":  (true, None)
+        //  - "false_some": (false, Some(_)) -> Sum of all `(false, "Mobile")`, etc.
+        //  - "false_none": (false, None)
+        let mut processed_counts = HashMap::new();
+        processed_counts.insert(
+            "true_some",
+            counts
+                .iter()
+                .filter(|&((hn, pt_str), _)| *hn && pt_str != "None")
+                .map(|(_, &v)| v)
+                .sum::<i32>(),
+        );
+        processed_counts.insert(
+            "true_none",
+            *counts.get(&(true, "None".to_string())).unwrap_or(&0),
+        );
+        processed_counts.insert(
+            "false_some",
+            counts
+                .iter()
+                .filter(|&((hn, pt_str), _)| !*hn && pt_str != "None")
+                .map(|(_, &v)| v)
+                .sum::<i32>(),
+        );
+        processed_counts.insert(
+            "false_none",
+            *counts.get(&(false, "None".to_string())).unwrap_or(&0),
+        );
 
-        let true_some_percent = true_some_count as f64 / num_iterations as f64;
-        let true_none_percent = true_none_count as f64 / num_iterations as f64;
-        let false_some_percent = false_some_count as f64 / num_iterations as f64;
-        let false_none_percent = false_none_count as f64 / num_iterations as f64;
-
-        // Allow for a 5% deviation
-        assert!(
-            true_some_percent > 0.85 && true_some_percent < 0.95,
-            "true, Some distribution: {}",
-            true_some_percent
-        );
-        assert!(
-            true_none_percent > 0.00 && true_none_percent < 0.10,
-            "true, None distribution: {}",
-            true_none_percent
-        );
-        assert!(
-            false_some_percent > 0.00 && false_some_percent < 0.09,
-            "false, Some distribution: {}",
-            false_some_percent
-        );
-        assert!(
-            false_none_percent > 0.00 && false_none_percent < 0.06,
-            "false, None distribution: {}",
-            false_none_percent
+        assert_distribution!(
+            processed_counts,
+            num_iterations,
+            &PHONE_TEMPLATE_WEIGHTS,
+            TOLERANCE,
+            [
+                ("true_some", 0, "true, Some"),
+                ("true_none", 1, "true, None"),
+                ("false_some", 2, "false, Some"),
+                ("false_none", 3, "false, None")
+            ]
         );
     }
 
     #[test]
     fn test_generate_name() {
-        let mut name_buf = String::new();
-
-        // Test case where name is generated
         let mut rng = StdRng::seed_from_u64(0);
-        let mut generated_name_found = false;
-        for _ in 0..1000 {
-            // Try up to 1000 times to get a name
+        let mut name_buf = String::new();
+        let mut counts = HashMap::new();
+        let num_iterations = 100000;
+        let mut name_validated = false;
+
+        for _ in 0..num_iterations {
             let name = generate_name(&mut rng, &mut name_buf);
-            if let Some(n) = name {
-                assert!(!n.is_empty());
-                assert!(n.contains(" "));
-                generated_name_found = true;
-                break;
+            if let Some(n) = &name {
+                // As a one-time check, validate the contents of the first name generated.
+                if !name_validated {
+                    assert!(!n.is_empty());
+                    assert!(n.contains(" "));
+                    name_validated = true;
+                }
             }
+            *counts.entry(name.is_some()).or_insert(0) += 1;
         }
+
+        // Ensure that at least one name was generated and validated during the test.
         assert!(
-            generated_name_found,
-            "Failed to generate a name after 1000 attempts."
+            name_validated,
+            "Failed to generate a single valid name in {} iterations.",
+            num_iterations
         );
 
-        // Test case where name is not generated
-        let mut rng = StdRng::seed_from_u64(1); // Use a different seed
-        let mut no_name_found = false;
-        for _ in 0..1000 {
-            // Try up to 1000 times to get no name
-            let name = generate_name(&mut rng, &mut name_buf);
-            if name.is_none() {
-                no_name_found = true;
-                break;
-            }
-        }
-        assert!(no_name_found, "Failed to get no name after 1000 attempts.");
+        const NAME_WEIGHTS: [u32; 2] = [80, 20]; // Some, None
+
+        assert_distribution!(
+            counts,
+            num_iterations,
+            &NAME_WEIGHTS,
+            TOLERANCE,
+            [(true, 0, "Some(Name)"), (false, 1, "None")]
+        );
     }
 }
