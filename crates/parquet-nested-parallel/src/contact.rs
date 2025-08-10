@@ -94,7 +94,8 @@ impl ContactRecordBatchGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::Array;
+    use arrow::array::{Array, ListArray, StringArray};
+    use arrow::datatypes::DataType;
     use parquet_nested_common::prelude::get_contact_schema;
     use std::sync::atomic::AtomicUsize;
 
@@ -135,12 +136,28 @@ mod tests {
         for i in 0..batch1.num_columns() {
             let col1 = batch1.column(i);
             let col2 = batch2.column(i);
+
             assert_eq!(
-                format!("{:?}", col1),
-                format!("{:?}", col2),
-                "Column {} should be equal",
+                col1.data_type(),
+                col2.data_type(),
+                "Data types for column {} should be equal",
                 i
             );
+
+            // Downcast and compare based on the column's data type
+            match col1.data_type() {
+                DataType::Utf8 => {
+                    let arr1 = col1.as_any().downcast_ref::<StringArray>().unwrap();
+                    let arr2 = col2.as_any().downcast_ref::<StringArray>().unwrap();
+                    assert_eq!(arr1, arr2, "Column {} (Name) should be equal", i);
+                }
+                DataType::List(_) => {
+                    let arr1 = col1.as_any().downcast_ref::<ListArray>().unwrap();
+                    let arr2 = col2.as_any().downcast_ref::<ListArray>().unwrap();
+                    assert_eq!(arr1, arr2, "Column {} (Phones) should be equal", i);
+                }
+                other => panic!("Unhandled data type for comparison: {}", other),
+            }
         }
     }
 
