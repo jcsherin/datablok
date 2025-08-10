@@ -167,10 +167,45 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let mut generator = ContactRecordBatchGenerator::new(schema, counter);
 
-        let count = 100000;
+        let count = 100_000;
         let batch = generator.generate(0, count).unwrap();
 
         assert_eq!(batch.num_rows(), count);
-        assert!(batch.column(0).len() > 0);
+
+        // Assert that the null count for the name column is within an expected
+        // statistical range. `generate_name` has a 20% chance of returning None.
+        let name_col = batch.column(0);
+        let null_count = name_col.null_count();
+
+        let expected_null_ratio = 0.2;
+        let tolerance = 0.05;
+        let lower_bound = (count as f64 * (expected_null_ratio - tolerance)) as usize;
+        let upper_bound = (count as f64 * (expected_null_ratio + tolerance)) as usize;
+
+        assert!(
+            null_count >= lower_bound && null_count <= upper_bound,
+            "Null count {} for name column is outside the expected range [{}, {}]",
+            null_count,
+            lower_bound,
+            upper_bound
+        );
+
+        // Assert that the null count for the phones column is within an expected
+        // statistical range. `generate_phones_count` has a 40% chance of returning 0,
+        // which corresponds to a null entry in the ListArray.
+        let phones_col = batch.column(1);
+        let phones_null_count = phones_col.null_count();
+
+        let expected_phones_null_ratio = 0.4;
+        let phones_lower_bound = (count as f64 * (expected_phones_null_ratio - tolerance)) as usize;
+        let phones_upper_bound = (count as f64 * (expected_phones_null_ratio + tolerance)) as usize;
+
+        assert!(
+            phones_null_count >= phones_lower_bound && phones_null_count <= phones_upper_bound,
+            "Null count {} for phones column is outside the expected range [{}, {}]",
+            phones_null_count,
+            phones_lower_bound,
+            phones_upper_bound
+        );
     }
 }
