@@ -106,8 +106,8 @@ pub fn generate_name(rng: &mut impl Rng, name_buf: &mut String) -> Option<String
         write!(
             name_buf,
             "{} {}",
-            FirstName().fake::<&str>(),
-            LastName().fake::<&str>(),
+            FirstName().fake_with_rng::<&str, _>(rng),
+            LastName().fake_with_rng::<&str, _>(rng),
         )
         .unwrap();
 

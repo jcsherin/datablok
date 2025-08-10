@@ -133,14 +133,14 @@ mod tests {
         assert_eq!(batch1.schema(), batch2.schema());
 
         for i in 0..batch1.num_columns() {
-            // Skip name column (index 0) as it uses `fake` crate which is not deterministic across
-            // separate `StdRng` instances.
-            if i == 0 {
-                continue;
-            }
             let col1 = batch1.column(i);
             let col2 = batch2.column(i);
-            assert_eq!(format!("{:?}", col1), format!("{:?}", col2));
+            assert_eq!(
+                format!("{:?}", col1),
+                format!("{:?}", col2),
+                "Column {} should be equal",
+                i
+            );
         }
     }
 
