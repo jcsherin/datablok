@@ -19,7 +19,7 @@ rarely uniform and typically feature a long-tail of less frequent values.
 Run this from the repo root:
 
 ```zsh
-RUST_LOG=info cargo run -p parquet-parallel-nested --release
+RUST_LOG=info cargo run -p parquet-nested-parallel --release
 ```
 
 ### Development CI
@@ -27,7 +27,7 @@ RUST_LOG=info cargo run -p parquet-parallel-nested --release
 For running the same workflow as GitHub CI in local development environment:
 
 ```zsh
-./scripts/verify.sh parquet-parallel-nested --verbose
+./scripts/verify.sh parquet-nested-parallel --verbose
 ```
 
 ### Expected Output

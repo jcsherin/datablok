@@ -1,5 +1,5 @@
 [package]
-name = "parquet-nested-data"
+name = "parquet-nested-basic"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,4 +8,4 @@ arrow = { version = "55.0.0", default-features = false, features = ["prettyprint
 env_logger = "0.11.8"
 log = "0.4.27"
 parquet = { version = "55.0.0", default-features = false, features = ["arrow"] }
-parquet-common = { version = "0.1.0", path = "../parquet-common" }
+parquet-nested-common = { version = "0.1.0", path = "../parquet-nested-common" }

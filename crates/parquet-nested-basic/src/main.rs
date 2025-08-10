@@ -3,7 +3,7 @@
 use arrow::record_batch::RecordBatch;
 use log::info;
 use parquet::arrow::ArrowWriter;
-use parquet_common::prelude::*;
+use parquet_nested_common::prelude::*;
 use std::error::Error;
 use std::fs::File;
 

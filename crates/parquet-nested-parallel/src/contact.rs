@@ -3,7 +3,7 @@ use arrow::array::{
     ListBuilder, RecordBatch, StringBuilder, StringDictionaryBuilder, StructBuilder,
 };
 use arrow::datatypes::{SchemaRef, UInt8Type};
-use parquet_common::prelude::{
+use parquet_nested_common::prelude::{
     PHONE_NUMBER_FIELD_INDEX, PHONE_TYPE_FIELD_INDEX, get_contact_phone_fields,
 };
 use rand::SeedableRng;
@@ -95,7 +95,7 @@ impl ContactRecordBatchGenerator {
 mod tests {
     use super::*;
     use arrow::array::Array;
-    use parquet_common::prelude::get_contact_schema;
+    use parquet_nested_common::prelude::get_contact_schema;
     use std::sync::atomic::AtomicUsize;
 
     #[test]

@@ -1,5 +1,5 @@
 [package]
-name = "parquet-common"
+name = "parquet-nested-common"
 version = "0.1.0"
 edition = "2024"
 

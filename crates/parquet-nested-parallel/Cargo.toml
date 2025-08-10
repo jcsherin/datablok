@@ -1,5 +1,5 @@
 [package]
-name = "parquet-parallel-nested"
+name = "parquet-nested-parallel"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,7 +8,7 @@ env_logger = "0.11.8"
 fake = "4.3.0"
 human_format = "1.1.0"
 log = "0.4.27"
-parquet-common = { version = "0.1.0", path = "../parquet-common" }
+parquet-nested-common = { version = "0.1.0", path = "../parquet-nested-common" }
 rayon = { version = "1.10.0", default-features = false }
 arrow = { version = "55.0.0", default-features = false, features = ["prettyprint"] }
 parquet = { version = "55.0.0", default-features = false, features = ["arrow"] }

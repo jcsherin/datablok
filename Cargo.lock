@@ -2888,25 +2888,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "parquet-common"
-version = "0.1.0"
-dependencies = [
- "arrow",
-]
-
-[[package]]
-name = "parquet-nested-data"
+name = "parquet-nested-basic"
 version = "0.1.0"
 dependencies = [
  "arrow",
  "env_logger",
  "log",
  "parquet",
- "parquet-common",
+ "parquet-nested-common",
 ]
 
 [[package]]
-name = "parquet-parallel-nested"
+name = "parquet-nested-common"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+]
+
+[[package]]
+name = "parquet-nested-parallel"
 version = "0.1.0"
 dependencies = [
  "arrow",
@@ -2917,7 +2917,7 @@ dependencies = [
  "human_format",
  "log",
  "parquet",
- "parquet-common",
+ "parquet-nested-common",
  "rand 0.9.1",
  "rayon",
 ]

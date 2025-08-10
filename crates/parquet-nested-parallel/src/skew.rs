@@ -7,7 +7,7 @@
 
 use fake::Fake;
 use fake::faker::name::en::{FirstName, LastName};
-use parquet_common::contact::PhoneType;
+use parquet_nested_common::contact::PhoneType;
 use rand::Rng;
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;

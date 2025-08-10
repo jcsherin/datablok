@@ -86,13 +86,13 @@ From the root of the monorepo, you can run this experiment using its package nam
 control the log output.
 
 ```zsh
-RUST_LOG=info cargo run -p parquet-nested-data
+RUST_LOG=info cargo run -p parquet-nested-basic
 ```
 
 To check the code for formatting, linting, and other issues, you can use the verification script:
 
 ```zsh
-./scripts/verify.sh parquet-nested-data
+./scripts/verify.sh parquet-nested-basic
 ```
 
 ### Expected Output
