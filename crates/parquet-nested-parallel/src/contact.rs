@@ -100,7 +100,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     #[test]
-    fn test_generator_basic() {
+    fn test_generator_properties() {
         let schema = get_contact_schema();
         let counter = Arc::new(AtomicUsize::new(0));
         let mut generator = ContactRecordBatchGenerator::new(schema.clone(), counter);
@@ -113,7 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generator_reproducibility() {
+    fn test_generator_is_deterministic() {
         let schema = get_contact_schema();
         let shared_counter = Arc::new(AtomicUsize::new(0));
 
@@ -162,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generator_large_batch() {
+    fn test_generator_100k_null_distribution() {
         let schema = get_contact_schema();
         let counter = Arc::new(AtomicUsize::new(0));
         let mut generator = ContactRecordBatchGenerator::new(schema, counter);
