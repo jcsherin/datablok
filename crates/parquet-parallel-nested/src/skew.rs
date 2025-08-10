@@ -182,6 +182,14 @@ mod tests {
         };
     }
 
+    #[derive(Debug, Eq, PartialEq, Hash)]
+    enum PhoneCountCategory {
+        Zero,
+        One,
+        Two,
+        ThreeToFive,
+    }
+
     #[test]
     fn test_generate_phone_type_distribution() {
         let mut rng = StdRng::seed_from_u64(0);
@@ -213,33 +221,26 @@ mod tests {
 
         for _ in 0..num_iterations {
             let num = generate_phones_count(&mut rng);
-            *counts.entry(num).or_insert(0) += 1;
+            let category = match num {
+                0 => PhoneCountCategory::Zero,
+                1 => PhoneCountCategory::One,
+                2 => PhoneCountCategory::Two,
+                3..=5 => PhoneCountCategory::ThreeToFive,
+                _ => unreachable!("Generated unexpected number of phones: {num}"),
+            };
+            *counts.entry(category).or_insert(0) += 1;
         }
 
-        // The generated counts are for individual numbers (0-5), but the weights are for
-        // four categories (0, 1, 2, 3-5). We need to process the raw counts to match
-        // these categories before asserting the distribution.
-        let mut processed_counts = HashMap::new();
-        processed_counts.insert(0, *counts.get(&0).unwrap_or(&0));
-        processed_counts.insert(1, *counts.get(&1).unwrap_or(&0));
-        processed_counts.insert(2, *counts.get(&2).unwrap_or(&0));
-        let count_3_5 = counts
-            .iter()
-            .filter(|&(&k, _)| k >= 3 && k <= 5)
-            .map(|(_, &v)| v)
-            .sum::<i32>();
-        processed_counts.insert(3, count_3_5); // Use a dummy key for the range
-
         assert_distribution!(
-            processed_counts,
+            counts,
             num_iterations,
             &PHONES_COUNT_WEIGHTS,
             TOLERANCE,
             [
-                (0, 0, "0 phones"),
-                (1, 1, "1 phone"),
-                (2, 2, "2 phones"),
-                (3, 3, "3-5 phones")
+                (PhoneCountCategory::Zero, 0, "0 phones"),
+                (PhoneCountCategory::One, 1, "1 phone"),
+                (PhoneCountCategory::Two, 2, "2 phones"),
+                (PhoneCountCategory::ThreeToFive, 3, "3-5 phones")
             ]
         );
     }
