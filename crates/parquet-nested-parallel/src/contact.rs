@@ -208,4 +208,16 @@ mod tests {
             phones_upper_bound
         );
     }
+
+    #[test]
+    fn test_generator_empty_batch() {
+        let schema = get_contact_schema();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut generator = ContactRecordBatchGenerator::new(schema.clone(), counter);
+
+        let batch = generator.generate(0, 0).unwrap();
+
+        assert_eq!(batch.num_rows(), 0);
+        assert_eq!(batch.schema(), schema);
+    }
 }
