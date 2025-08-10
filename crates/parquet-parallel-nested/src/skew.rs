@@ -43,6 +43,9 @@ fn generate_phone_type(rng: &mut impl Rng) -> PhoneType {
 /// -  5%: 3-5 phones
 const PHONES_COUNT_WEIGHTS: [u32; 4] = [40, 45, 10, 5];
 
+/// The range for the rare case where a contact has a high number of phones.
+const HIGH_PHONE_COUNT_RANGE: std::ops::RangeInclusive<i32> = 3..=5;
+
 /// Generates a skewed number of phones (from 0 to 5) based on the `PHONES_COUNT_WEIGHTS` distribution.
 pub fn generate_phones_count(rng: &mut impl Rng) -> i32 {
     let dist = WeightedIndex::new(PHONES_COUNT_WEIGHTS).unwrap();
@@ -50,7 +53,7 @@ pub fn generate_phones_count(rng: &mut impl Rng) -> i32 {
         0 => 0,
         1 => 1,
         2 => 2,
-        3 => rng.random_range(3..=5),
+        3 => rng.random_range(HIGH_PHONE_COUNT_RANGE),
         _ => unreachable!(
             "WeightedIndex should only return indices within the bounds of PHONES_COUNT_WEIGHTS"
         ),
