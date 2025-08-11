@@ -2920,6 +2920,7 @@ dependencies = [
  "parquet-nested-common",
  "rand 0.9.1",
  "rayon",
+ "tempfile",
 ]
 
 [[package]]
