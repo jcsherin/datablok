@@ -27,3 +27,7 @@ arrow = { version = "55.0.0", default-features = false, features = ["prettyprint
 [[bench]]
 name = "datagen"
 harness = false
+
+[[bench]]
+name = "pipeline"
+harness = false
