@@ -5,8 +5,6 @@ use parquet_nested_parallel::skew::{generate_name, generate_phone_template};
 use rand::SeedableRng;
 use rand::prelude::StdRng;
 use std::hint::black_box;
-use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 /// Benchmarks for primitive data generation functions in `skew.rs`.
@@ -39,9 +37,8 @@ fn contact_record_batch_generator_benchmark(c: &mut Criterion) {
 
     for &size in RECORD_BATCH_SIZES {
         group.bench_function(format!("generate {} records", size), |b| {
-            let counter = Arc::new(AtomicUsize::new(0));
-            let mut generator = ContactRecordBatchGenerator::new(schema.clone(), counter);
-            b.iter(|| black_box(generator.generate(SEED, size).unwrap()))
+            let mut generator = ContactRecordBatchGenerator::new(schema.clone());
+            b.iter(|| black_box(generator.generate(SEED, size, 0).unwrap()))
         });
     }
 }

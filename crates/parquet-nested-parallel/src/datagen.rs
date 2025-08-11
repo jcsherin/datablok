@@ -11,21 +11,36 @@ use rand::prelude::StdRng;
 use std::error::Error;
 use std::fmt::Write;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+
 #[derive(Debug)]
 pub struct ContactRecordBatchGenerator {
     schema: SchemaRef,
-    counter: Arc<AtomicUsize>,
 }
 
 impl ContactRecordBatchGenerator {
     const PHONE_NUMBER_LENGTH: usize = 15;
+    pub const PHONE_NUMBER_UPPER_BOUND: usize = 100_000_000; // for an 8-digit unique suffix
 
-    pub fn new(schema: SchemaRef, counter: Arc<AtomicUsize>) -> Self {
-        ContactRecordBatchGenerator { schema, counter }
+    pub fn new(schema: SchemaRef) -> Self {
+        ContactRecordBatchGenerator { schema }
     }
 
-    pub fn generate(&mut self, seed: u64, count: usize) -> Result<RecordBatch, Box<dyn Error>> {
+    pub fn generate(
+        &self,
+        seed: u64,
+        count: usize,
+        phone_id_offset: usize,
+    ) -> Result<RecordBatch, Box<dyn Error>> {
+        let mut phone_number_counter = phone_id_offset;
+        // info!("seed: {seed}, count: {count}, phone_number_start: {phone_number_counter}");
+
+        // Invariant: upper bound should not exceed 100M (8 digits)
+        assert!(
+            phone_number_counter + count < Self::PHONE_NUMBER_UPPER_BOUND,
+            "The number of phone numbers to be generated must be less than {}.",
+            Self::PHONE_NUMBER_UPPER_BOUND
+        );
+
         let mut name = StringBuilder::new();
         let phone_type = StringDictionaryBuilder::<UInt8Type>::new();
         let phone_number = StringBuilder::new();
@@ -62,9 +77,20 @@ impl ContactRecordBatchGenerator {
                         })?;
 
                     if has_number {
-                        let uniq_suffix = self.counter.fetch_add(1, Ordering::Relaxed);
+                        // Invariant: The phone number we are generating should fit in the 8-digit suffix.
+                        //
+                        // We know how many `count` of records are to be generated in this function call. But the value
+                        // of `phone_count` varies between 0 and 5. So the total number of phone numbers we need to
+                        // generate in this run is non-trivial to precompute. Therefore, this is a more direct and
+                        // simper way to check it. Rest assured, this does not make the code slower!
+                        assert!(
+                            phone_number_counter < Self::PHONE_NUMBER_UPPER_BOUND,
+                            "Phone number ID exceeded global limit"
+                        );
 
-                        write!(phone_number_buf, "+91-99-{uniq_suffix:08}").unwrap();
+                        write!(phone_number_buf, "+91-99-{phone_number_counter:08}").unwrap();
+                        phone_number_counter += 1;
+
                         phone_number_builder.append_value(&phone_number_buf);
 
                         phone_number_buf.clear();
@@ -97,16 +123,14 @@ mod tests {
     use arrow::array::{Array, ListArray, StringArray};
     use arrow::datatypes::DataType;
     use parquet_nested_common::prelude::get_contact_schema;
-    use std::sync::atomic::AtomicUsize;
 
     #[test]
     fn test_generator_properties() {
         let schema = get_contact_schema();
-        let counter = Arc::new(AtomicUsize::new(0));
-        let mut generator = ContactRecordBatchGenerator::new(schema.clone(), counter);
+        let generator = ContactRecordBatchGenerator::new(schema.clone());
 
         let count = 100;
-        let batch = generator.generate(0, count).unwrap();
+        let batch = generator.generate(0, count, 0).unwrap();
 
         assert_eq!(batch.num_rows(), count);
         assert_eq!(batch.schema(), schema);
@@ -115,18 +139,14 @@ mod tests {
     #[test]
     fn test_generator_is_deterministic() {
         let schema = get_contact_schema();
-        let shared_counter = Arc::new(AtomicUsize::new(0));
 
-        let mut generator1 =
-            ContactRecordBatchGenerator::new(schema.clone(), shared_counter.clone());
+        let generator1 = ContactRecordBatchGenerator::new(schema.clone());
 
         let count = 100;
-        let batch1 = generator1.generate(0, count).unwrap();
+        let batch1 = generator1.generate(0, count, 0).unwrap();
 
-        // Reset the counter for the second generator to ensure identical sequence
-        shared_counter.store(0, Ordering::Relaxed);
-        let mut generator2 = ContactRecordBatchGenerator::new(schema, shared_counter.clone());
-        let batch2 = generator2.generate(0, count).unwrap();
+        let generator2 = ContactRecordBatchGenerator::new(schema);
+        let batch2 = generator2.generate(0, count, 0).unwrap();
 
         // Compare batches for equality (content and schema)
         assert_eq!(batch1.num_rows(), batch2.num_rows());
@@ -164,11 +184,10 @@ mod tests {
     #[test]
     fn test_generator_100k_null_distribution() {
         let schema = get_contact_schema();
-        let counter = Arc::new(AtomicUsize::new(0));
-        let mut generator = ContactRecordBatchGenerator::new(schema, counter);
+        let generator = ContactRecordBatchGenerator::new(schema);
 
         let count = 100_000;
-        let batch = generator.generate(0, count).unwrap();
+        let batch = generator.generate(0, count, 0).unwrap();
 
         assert_eq!(batch.num_rows(), count);
 
@@ -212,10 +231,9 @@ mod tests {
     #[test]
     fn test_generator_empty_batch() {
         let schema = get_contact_schema();
-        let counter = Arc::new(AtomicUsize::new(0));
-        let mut generator = ContactRecordBatchGenerator::new(schema.clone(), counter);
+        let generator = ContactRecordBatchGenerator::new(schema.clone());
 
-        let batch = generator.generate(0, 0).unwrap();
+        let batch = generator.generate(0, 0, 0).unwrap();
 
         assert_eq!(batch.num_rows(), 0);
         assert_eq!(batch.schema(), schema);

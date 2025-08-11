@@ -8,7 +8,6 @@ use rayon::prelude::*;
 use std::error::Error;
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -76,8 +75,6 @@ pub fn run_pipeline(
     config: &PipelineConfig,
 ) -> Result<PipelineMetrics, Box<dyn Error + Send + Sync>> {
     let start_time = Instant::now();
-    // Constraint: phone numbers are unique globally
-    let phone_id_counter = Arc::new(AtomicUsize::new(0));
 
     // Hardcoded to 4 writers for now as per the original main.rs
     // This will be made dynamic in a future refactoring.
@@ -99,43 +96,34 @@ pub fn run_pipeline(
     pool.install(|| {
         let num_batches = config.target_contacts.div_ceil(config.record_batch_size);
         let parquet_schema = get_contact_schema();
+        let phone_number_batch_size =
+            ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND.div_ceil(num_batches);
 
         // Create clones of the resources that will be moved into each thread.
         let senders = (Arc::new(tx1), Arc::new(tx2), Arc::new(tx3), Arc::new(tx4));
-        let phone_id_counter = phone_id_counter.clone();
 
         // We will parallelize the work by giving each producer thread a range of chunks to process.
-        (0..num_batches).into_par_iter().for_each_init(
-            || {
-                (
-                    ContactRecordBatchGenerator::new(
-                        parquet_schema.clone(),
-                        phone_id_counter.clone(),
-                    ),
-                    senders.clone(),
-                )
-            },
-            |(generator_state, senders), batch_index| {
-                let start_row = batch_index * config.record_batch_size;
-                let current_batch_size =
-                    std::cmp::min(config.record_batch_size, config.target_contacts - start_row);
+        (0..num_batches).into_par_iter().for_each(|batch_index| {
+            let start_row = batch_index * config.record_batch_size;
+            let current_batch_size =
+                std::cmp::min(config.record_batch_size, config.target_contacts - start_row);
 
-                if current_batch_size == 0 {
-                    return;
-                }
+            if current_batch_size == 0 {
+                return;
+            }
 
-                let rb = generator_state
-                    .generate(batch_index as u64, current_batch_size)
-                    .expect("Failed to generate fused record batch");
+            let phone_id_offset = batch_index * phone_number_batch_size;
+            let rb = ContactRecordBatchGenerator::new(parquet_schema.clone())
+                .generate(batch_index as u64, current_batch_size, phone_id_offset)
+                .expect("Failed to generate fused record batch");
 
-                match batch_index % 4 {
-                    0 => senders.0.send(rb).expect("Failed to send to rx1"),
-                    1 => senders.1.send(rb).expect("Failed to send to rx2"),
-                    2 => senders.2.send(rb).expect("Failed to send to rx3"),
-                    _ => senders.3.send(rb).expect("Failed to send to rx4"),
-                }
-            },
-        );
+            match batch_index % 4 {
+                0 => senders.0.send(rb).expect("Failed to send to rx1"),
+                1 => senders.1.send(rb).expect("Failed to send to rx2"),
+                2 => senders.2.send(rb).expect("Failed to send to rx3"),
+                _ => senders.3.send(rb).expect("Failed to send to rx4"),
+            }
+        });
 
         // The original senders (tx1, tx2, etc.) are still owned by the main thread.
         // We drop them here, which closes the channels. The writer threads will
