@@ -3,7 +3,7 @@ use human_format::Formatter;
 use log::{LevelFilter, info};
 use parquet::arrow::ArrowWriter;
 use parquet_nested_common::prelude::*;
-use parquet_nested_parallel::contact::ContactRecordBatchGenerator;
+use parquet_nested_parallel::datagen::ContactRecordBatchGenerator;
 use rayon::prelude::*;
 use std::error::Error;
 use std::fs::File;
