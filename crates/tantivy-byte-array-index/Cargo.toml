@@ -1,7 +1,7 @@
 [package]
 name = "tantivy-byte-array-index"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 env_logger = { version = "0.11.8" }
