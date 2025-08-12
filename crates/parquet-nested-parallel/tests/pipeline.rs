@@ -1,6 +1,6 @@
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet_nested_common::prelude::get_contact_schema;
-use parquet_nested_parallel::pipeline::{PipelineConfig, run_pipeline};
+use parquet_nested_parallel::pipeline::{PipelineConfig, PipelineConfigBuilder, run_pipeline};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use tempfile::{Builder, TempDir};
@@ -14,9 +14,9 @@ fn assert_pipeline_properties(temp_dir: &TempDir, config: &PipelineConfig) {
     // Assert that correct number of files were created.
     assert_eq!(
         output_files.len(),
-        config.num_writers,
+        config.num_writers(),
         "Expected {} output files, but found {}",
-        config.num_writers,
+        config.num_writers(),
         output_files.len()
     );
 
@@ -43,9 +43,9 @@ fn assert_pipeline_properties(temp_dir: &TempDir, config: &PipelineConfig) {
     // Assert total number of rows written across all files matches target count in config.
     assert_eq!(
         total_rows,
-        config.target_contacts,
+        config.target_contacts(),
         "Total rows: {total_rows} in output files do not match target contacts: {target_contacts}.",
-        target_contacts = config.target_contacts,
+        target_contacts = config.target_contacts(),
     );
 
     // Teardown: The `temp_dir` is cleaned up automatically when it gets dropped here.
@@ -60,14 +60,14 @@ macro_rules! pipeline_test {
                 .tempdir()
                 .unwrap();
 
-            let config = PipelineConfig {
-                target_contacts: 10_000,
-                num_writers: $num_writers,
-                num_producers: 8,
-                record_batch_size: 1024,
-                output_dir: temp_dir.path().to_path_buf(),
-                output_filename: "contacts".to_string(),
-            };
+            let config = PipelineConfigBuilder::new()
+                .with_target_contacts(10_000)
+                .with_record_batch_size(1024)
+                .with_output_dir(temp_dir.path().to_path_buf())
+                .with_output_filename("test_output".to_string())
+                .with_num_writers($num_writers)
+                .try_build()
+                .unwrap();
 
             assert_pipeline_properties(&temp_dir, &config);
         }

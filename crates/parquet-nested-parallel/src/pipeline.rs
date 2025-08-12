@@ -6,11 +6,12 @@ use parquet::arrow::ArrowWriter;
 use parquet_nested_common::prelude::*;
 use rayon::prelude::*;
 use std::error::Error;
+use std::fmt::Debug;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::thread;
 use std::time::{Duration, Instant};
+use std::{fmt, thread};
 
 /// Configuration for the parallel data generation and writing pipeline.
 ///
@@ -18,17 +19,119 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
     /// The total number of contacts to generate.
-    pub target_contacts: usize,
+    target_contacts: usize,
     /// The number of concurrent writer threads.
-    pub num_writers: usize,
+    num_writers: usize,
     /// The number of producer threads in the rayon thread pool.
-    pub num_producers: usize,
+    num_producers: usize,
     /// The number of rows per RecordBatch.
-    pub record_batch_size: usize,
+    record_batch_size: usize,
     /// The directory where the output Parquet files will be written.
-    pub output_dir: PathBuf,
+    output_dir: PathBuf,
     /// The filename to use when output Parquet files are written.
-    pub output_filename: String,
+    output_filename: String,
+}
+
+impl PipelineConfig {
+    pub fn target_contacts(&self) -> usize {
+        self.target_contacts
+    }
+
+    pub fn num_writers(&self) -> usize {
+        self.num_writers
+    }
+}
+
+impl Default for PipelineConfig {
+    fn default() -> Self {
+        Self {
+            target_contacts: 10_000,
+            num_writers: 2,
+            num_producers: 8,
+            record_batch_size: 1024,
+            output_dir: PathBuf::from("output"),
+            output_filename: "out".to_string(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum PipelineConfigError {
+    ZeroProducers {
+        total_threads: usize,
+        num_writers: usize,
+    },
+}
+
+impl fmt::Display for PipelineConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PipelineConfigError::ZeroProducers {
+                total_threads,
+                num_writers,
+            } => {
+                write!(
+                    f,
+                    "No. of producer threads must be greater than zero. Total threads: {total_threads}. Writer threads: {num_writers}.",
+                )
+            }
+        }
+    }
+}
+
+impl Error for PipelineConfigError {}
+
+#[derive(Debug, Default)]
+pub struct PipelineConfigBuilder {
+    inner: PipelineConfig,
+}
+
+impl PipelineConfigBuilder {
+    pub fn new() -> Self {
+        Self {
+            inner: PipelineConfig::default(),
+        }
+    }
+
+    pub fn with_target_contacts(mut self, target_contacts: usize) -> Self {
+        self.inner.target_contacts = target_contacts;
+        self
+    }
+
+    pub fn with_num_writers(mut self, num_writers: usize) -> Self {
+        self.inner.num_writers = num_writers;
+        self
+    }
+
+    pub fn with_record_batch_size(mut self, record_batch_size: usize) -> Self {
+        self.inner.record_batch_size = record_batch_size;
+        self
+    }
+
+    pub fn with_output_dir(mut self, output_dir: PathBuf) -> Self {
+        self.inner.output_dir = output_dir;
+        self
+    }
+
+    pub fn with_output_filename(mut self, output_filename: String) -> Self {
+        self.inner.output_filename = output_filename;
+        self
+    }
+
+    pub fn try_build(mut self) -> Result<PipelineConfig, PipelineConfigError> {
+        let total_threads = rayon::current_num_threads();
+        let num_producers = total_threads.saturating_sub(self.inner.num_writers);
+
+        self.inner.num_producers = num_producers;
+        if self.inner.num_producers == 0 {
+            return Err(PipelineConfigError::ZeroProducers {
+                total_threads,
+                num_writers: self.inner.num_writers,
+            });
+        }
+
+        Ok(self.inner)
+    }
 }
 
 /// Contains performance metrics from a completed pipeline run.
@@ -38,6 +141,8 @@ pub struct PipelineMetrics {
     pub total_in_memory_bytes: usize,
     /// The total time taken for the entire pipeline to complete.
     pub elapsed_time: Duration,
+    /// The total throughput of the pipeline relative to records processed.
+    pub records_per_sec: f64,
 }
 
 fn create_writer_thread(
@@ -180,9 +285,11 @@ pub fn run_pipeline(
     }
 
     let elapsed_time = start_time.elapsed();
+    let records_per_sec = (config.target_contacts as f64) / elapsed_time.as_secs_f64();
 
     Ok(PipelineMetrics {
         total_in_memory_bytes,
         elapsed_time,
+        records_per_sec,
     })
 }

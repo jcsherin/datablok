@@ -1,5 +1,5 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
-use parquet_nested_parallel::pipeline::{PipelineConfig, run_pipeline};
+use parquet_nested_parallel::pipeline::{PipelineConfigBuilder, run_pipeline};
 use std::time::Duration;
 use tempfile::tempdir;
 
@@ -14,21 +14,20 @@ fn pipeline_throughput_benchmark(c: &mut Criterion) {
     for &target_contacts in target_contacts_sizes {
         group.bench_function(
             format!(
-                "{} contacts, {} parquet writer threads, {} data generator threads",
-                target_contacts, num_writers, num_producers
+                "{target_contacts} contacts, {num_writers} parquet writer threads, {num_producers} data generator threads",
             ),
             |b| {
                 b.iter_batched(
                     || {
                         let temp_dir = tempdir().unwrap();
-                        let config = PipelineConfig {
-                            target_contacts,
-                            num_writers,
-                            num_producers,
-                            record_batch_size: 4096,
-                            output_dir: temp_dir.path().to_path_buf(),
-                            output_filename: "contacts".to_string(),
-                        };
+                        let config = PipelineConfigBuilder::new()
+                            .with_target_contacts(target_contacts)
+                            .with_num_writers(num_writers)
+                            .with_record_batch_size(4096)
+                            .with_output_dir(temp_dir.path().to_path_buf())
+                            .with_output_filename("contacts".to_string())
+                            .try_build()
+                            .unwrap();
 
                         (config, temp_dir)
                     },
