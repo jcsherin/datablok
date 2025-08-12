@@ -88,6 +88,13 @@ pub fn run_pipeline(
     let writer_handle_3 = create_writer_thread(config.output_dir.join("contacts_3.parquet"), rx3);
     let writer_handle_4 = create_writer_thread(config.output_dir.join("contacts_4.parquet"), rx4);
 
+    let writers = [
+        writer_handle_1,
+        writer_handle_2,
+        writer_handle_3,
+        writer_handle_4,
+    ];
+
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(config.num_producers)
         .build()
@@ -131,12 +138,43 @@ pub fn run_pipeline(
         drop(senders);
     });
 
-    // Teardown
-    let bytes1 = writer_handle_1.join().unwrap()?;
-    let bytes2 = writer_handle_2.join().unwrap()?;
-    let bytes3 = writer_handle_3.join().unwrap()?;
-    let bytes4 = writer_handle_4.join().unwrap()?;
-    let total_in_memory_bytes = bytes1 + bytes2 + bytes3 + bytes4;
+    let mut total_in_memory_bytes = 0;
+    let mut writer_errors: Vec<String> = Vec::new();
+
+    // Graceful Shutdown
+    for (i, writer_handle) in writers.into_iter().enumerate() {
+        match writer_handle.join() {
+            Ok(Ok(bytes)) => {
+                total_in_memory_bytes += bytes;
+            }
+            Ok(Err(e)) => {
+                let error_msg = format!("Writer thread {i} failed with error: {e:?}");
+                log::error!("{}", &error_msg);
+                writer_errors.push(error_msg);
+            }
+            Err(e) => {
+                let owned_error_msg;
+                let msg = if let Some(s) = e.downcast_ref::<&'static str>() {
+                    *s
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.as_str()
+                } else if let Some(error) = e.downcast_ref::<Box<dyn Error + Send + 'static>>() {
+                    owned_error_msg = error.to_string();
+                    owned_error_msg.as_str()
+                } else {
+                    "unknown error"
+                };
+
+                let error_msg = format!("Writer thread {i} panicked: {msg}");
+                log::error!("{}", &error_msg);
+                writer_errors.push(error_msg);
+            }
+        }
+    }
+
+    if !writer_errors.is_empty() {
+        return Err(writer_errors.join("\n").into());
+    }
 
     let elapsed_time = start_time.elapsed();
 
