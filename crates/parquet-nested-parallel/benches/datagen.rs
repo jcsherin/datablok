@@ -37,7 +37,7 @@ fn contact_record_batch_generator_benchmark(c: &mut Criterion) {
 
     for &size in RECORD_BATCH_SIZES {
         group.bench_function(format!("generate {} records", size), |b| {
-            let mut generator = ContactRecordBatchGenerator::new(schema.clone());
+            let generator = ContactRecordBatchGenerator::new(schema.clone());
             b.iter(|| black_box(generator.generate(SEED, size, 0).unwrap()))
         });
     }
