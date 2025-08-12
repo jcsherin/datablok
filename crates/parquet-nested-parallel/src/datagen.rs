@@ -30,7 +30,7 @@ impl ContactRecordBatchGenerator {
         seed: u64,
         count: usize,
         phone_id_offset: usize,
-    ) -> Result<RecordBatch, Box<dyn Error>> {
+    ) -> Result<RecordBatch, Box<dyn Error + Send + Sync>> {
         let mut phone_number_counter = phone_id_offset;
         // info!("seed: {seed}, count: {count}, phone_number_start: {phone_number_counter}");
 
@@ -71,7 +71,7 @@ impl ContactRecordBatchGenerator {
                     let phone_number_builder = builder
                         .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
                         .ok_or_else(|| {
-                            Box::<dyn Error>::from(
+                            Box::<dyn Error + Send + Sync>::from(
                                 "Expected `number` field at idx: 0 of `Phone` struct builder.",
                             )
                         })?;
@@ -100,7 +100,7 @@ impl ContactRecordBatchGenerator {
 
                     builder
                         .field_builder::<StringDictionaryBuilder<UInt8Type>>(PHONE_TYPE_FIELD_INDEX)
-                        .ok_or_else(|| Box::<dyn Error>::from("Expected `phone_type` field at idx: {PHONE_TYPE_FIELD_INDEX} of `Phone` struct builder."))?
+                        .ok_or_else(|| Box::<dyn Error + Send + Sync>::from("Expected `phone_type` field at idx: {PHONE_TYPE_FIELD_INDEX} of `Phone` struct builder."))?
                         .append_option(phone_type);
                 }
 

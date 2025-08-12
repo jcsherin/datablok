@@ -30,6 +30,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         num_producers,
         record_batch_size: RECORD_BATCH_SIZE,
         output_dir,
+        output_filename: "contacts".to_string(),
     };
 
     let mut human_formatter = Formatter::new();

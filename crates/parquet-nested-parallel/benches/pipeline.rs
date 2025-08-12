@@ -27,6 +27,7 @@ fn pipeline_throughput_benchmark(c: &mut Criterion) {
                             num_producers,
                             record_batch_size: 4096,
                             output_dir: temp_dir.path().to_path_buf(),
+                            output_filename: "contacts".to_string(),
                         };
 
                         (config, temp_dir)

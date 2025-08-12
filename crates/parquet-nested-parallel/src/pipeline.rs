@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use std::error::Error;
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::{Arc, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -27,6 +27,8 @@ pub struct PipelineConfig {
     pub record_batch_size: usize,
     /// The directory where the output Parquet files will be written.
     pub output_dir: PathBuf,
+    /// The filename to use when output Parquet files are written.
+    pub output_filename: String,
 }
 
 /// Contains performance metrics from a completed pipeline run.
@@ -76,67 +78,68 @@ pub fn run_pipeline(
 ) -> Result<PipelineMetrics, Box<dyn Error + Send + Sync>> {
     let start_time = Instant::now();
 
-    // Hardcoded to 4 writers for now as per the original main.rs
-    // This will be made dynamic in a future refactoring.
-    let (tx1, rx1) = mpsc::sync_channel(config.num_producers);
-    let (tx2, rx2) = mpsc::sync_channel(config.num_producers);
-    let (tx3, rx3) = mpsc::sync_channel(config.num_producers);
-    let (tx4, rx4) = mpsc::sync_channel(config.num_producers);
+    let mut writers: Vec<_> = Vec::new();
+    let mut senders = Vec::new();
 
-    let writer_handle_1 = create_writer_thread(config.output_dir.join("contacts_1.parquet"), rx1);
-    let writer_handle_2 = create_writer_thread(config.output_dir.join("contacts_2.parquet"), rx2);
-    let writer_handle_3 = create_writer_thread(config.output_dir.join("contacts_3.parquet"), rx3);
-    let writer_handle_4 = create_writer_thread(config.output_dir.join("contacts_4.parquet"), rx4);
+    for i in 0..config.num_writers {
+        let (tx, rx) = mpsc::sync_channel(config.num_producers * 2); // double buffer depth
 
-    let writers = [
-        writer_handle_1,
-        writer_handle_2,
-        writer_handle_3,
-        writer_handle_4,
-    ];
+        let output_filename = format!("{filename}_{i}.parquet", filename = config.output_filename);
+        let output_path = config.output_dir.join(output_filename);
+
+        let writer = create_writer_thread(output_path, rx);
+
+        writers.push(writer);
+        senders.push(tx);
+    }
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(config.num_producers)
         .build()
         .unwrap();
 
-    pool.install(|| {
+    let processing_result_from_pool = pool.install(|| {
         let num_batches = config.target_contacts.div_ceil(config.record_batch_size);
         let parquet_schema = get_contact_schema();
         let phone_number_batch_size =
             ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND.div_ceil(num_batches);
 
-        // Create clones of the resources that will be moved into each thread.
-        let senders = (Arc::new(tx1), Arc::new(tx2), Arc::new(tx3), Arc::new(tx4));
-
         // We will parallelize the work by giving each producer thread a range of chunks to process.
-        (0..num_batches).into_par_iter().for_each(|batch_index| {
-            let start_row = batch_index * config.record_batch_size;
-            let current_batch_size =
-                std::cmp::min(config.record_batch_size, config.target_contacts - start_row);
+        let processing_result = (0..num_batches).into_par_iter().try_for_each(
+            |batch_index| -> Result<(), Box<dyn Error + Send + Sync>> {
+                let start_row = batch_index * config.record_batch_size;
+                let current_batch_size =
+                    std::cmp::min(config.record_batch_size, config.target_contacts - start_row);
 
-            if current_batch_size == 0 {
-                return;
-            }
+                if current_batch_size == 0 {
+                    return Ok(());
+                }
 
-            let phone_id_offset = batch_index * phone_number_batch_size;
-            let rb = ContactRecordBatchGenerator::new(parquet_schema.clone())
-                .generate(batch_index as u64, current_batch_size, phone_id_offset)
-                .expect("Failed to generate fused record batch");
+                let phone_id_offset = batch_index * phone_number_batch_size;
+                let rb = ContactRecordBatchGenerator::new(parquet_schema.clone()).generate(
+                    batch_index as u64,
+                    current_batch_size,
+                    phone_id_offset,
+                )?;
 
-            match batch_index % 4 {
-                0 => senders.0.send(rb).expect("Failed to send to rx1"),
-                1 => senders.1.send(rb).expect("Failed to send to rx2"),
-                2 => senders.2.send(rb).expect("Failed to send to rx3"),
-                _ => senders.3.send(rb).expect("Failed to send to rx4"),
-            }
-        });
+                let sender_id = batch_index % config.num_writers;
+
+                senders[sender_id]
+                    .send(rb)
+                    .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+                Ok(())
+            },
+        );
 
         // The original senders (tx1, tx2, etc.) are still owned by the main thread.
         // We drop them here, which closes the channels. The writer threads will
         // then finish their work and terminate gracefully.
         drop(senders);
+        processing_result
     });
+
+    processing_result_from_pool?;
 
     let mut total_in_memory_bytes = 0;
     let mut writer_errors: Vec<String> = Vec::new();

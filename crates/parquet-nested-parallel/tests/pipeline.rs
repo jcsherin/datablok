@@ -3,25 +3,9 @@ use parquet_nested_common::prelude::get_contact_schema;
 use parquet_nested_parallel::pipeline::{PipelineConfig, run_pipeline};
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use tempfile::Builder;
+use tempfile::{Builder, TempDir};
 
-#[test]
-fn test_pipeline_produces_valid_output() {
-    // Setup test environment and configuration.
-    let temp_dir = Builder::new()
-        .prefix("pipeline-correctness-test")
-        .tempdir()
-        .unwrap();
-
-    let config = PipelineConfig {
-        target_contacts: 10_000,
-        num_writers: 4,
-        num_producers: 4, // Use 4 producers for the test
-        record_batch_size: 1024,
-        output_dir: temp_dir.path().to_path_buf(),
-    };
-
-    // Run the pipeline.
+fn assert_pipeline_properties(temp_dir: &TempDir, config: &PipelineConfig) {
     let _ = run_pipeline(&config).expect("Pipeline failed to run");
 
     // Verify the output is correct.
@@ -66,6 +50,38 @@ fn test_pipeline_produces_valid_output() {
 
     // Teardown: The `temp_dir` is cleaned up automatically when it gets dropped here.
 }
+
+macro_rules! pipeline_test {
+    ($name:ident, $num_writers:expr) => {
+        #[test]
+        fn $name() {
+            let temp_dir = Builder::new()
+                .prefix("pipeline-correctness-test")
+                .tempdir()
+                .unwrap();
+
+            let config = PipelineConfig {
+                target_contacts: 10_000,
+                num_writers: $num_writers,
+                num_producers: 8,
+                record_batch_size: 1024,
+                output_dir: temp_dir.path().to_path_buf(),
+                output_filename: "contacts".to_string(),
+            };
+
+            assert_pipeline_properties(&temp_dir, &config);
+        }
+    };
+}
+
+pipeline_test!(test_pipeline_with_1_writer, 1);
+pipeline_test!(test_pipeline_with_2_writers, 2);
+pipeline_test!(test_pipeline_with_3_writers, 3);
+pipeline_test!(test_pipeline_with_4_writers, 4);
+pipeline_test!(test_pipeline_with_5_writers, 5);
+pipeline_test!(test_pipeline_with_6_writers, 6);
+pipeline_test!(test_pipeline_with_7_writers, 7);
+pipeline_test!(test_pipeline_with_8_writers, 8);
 
 /// Helper function to find and sort Parquet files in a directory.
 fn find_parquet_files(dir: &Path) -> Vec<PathBuf> {
