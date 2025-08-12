@@ -1,6 +1,6 @@
-use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use parquet_nested_common::prelude::get_contact_schema;
-use parquet_nested_parallel::pipeline::{PipelineConfigBuilder, run_pipeline};
+use parquet_nested_parallel::pipeline::{run_pipeline, PipelineConfigBuilder};
 use std::time::Duration;
 use tempfile::tempdir;
 

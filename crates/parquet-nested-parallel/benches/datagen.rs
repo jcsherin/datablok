@@ -1,9 +1,9 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion};
 use parquet_nested_common::prelude::get_contact_schema;
 use parquet_nested_parallel::datagen::ContactRecordBatchGenerator;
 use parquet_nested_parallel::skew::{generate_name, generate_phone_template};
-use rand::SeedableRng;
 use rand::prelude::StdRng;
+use rand::SeedableRng;
 use std::hint::black_box;
 use std::time::Duration;
 

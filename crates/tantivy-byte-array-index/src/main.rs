@@ -6,7 +6,7 @@ mod query;
 mod query_session;
 
 use crate::common::{Config, SchemaFields};
-use crate::doc::{DocIdMapper, DocMapper, DocSchema, examples};
+use crate::doc::{examples, DocIdMapper, DocMapper, DocSchema};
 use crate::error::Error as LocalError;
 use crate::error::Error::ParquetMetadata;
 use crate::error::Result;
@@ -22,13 +22,13 @@ use datafusion_common::arrow::array::{ArrayRef, StringArray};
 use datafusion_common::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion_common::arrow::record_batch::RecordBatch;
 use datafusion_common::{DFSchema, DataFusionError, ScalarValue};
-use datafusion_datasource::PartitionedFile;
 use datafusion_datasource::file_scan_config::FileScanConfigBuilder;
 use datafusion_datasource::source::DataSourceExec;
+use datafusion_datasource::PartitionedFile;
 use datafusion_datasource_parquet::source::ParquetSource;
 use datafusion_execution::object_store::ObjectStoreUrl;
 use datafusion_expr::expr::Expr;
-use datafusion_expr::{TableProviderFilterPushDown, TableType, col, lit};
+use datafusion_expr::{col, lit, TableProviderFilterPushDown, TableType};
 use datafusion_physical_plan::execution_plan::ExecutionPlan;
 use log::{info, trace};
 use parquet::arrow::ArrowWriter;
@@ -56,7 +56,7 @@ use tantivy::directory::{
 };
 use tantivy::query::{PhraseQuery, Query};
 use tantivy::schema::{Schema as IndexSchema, Value};
-use tantivy::{Directory, HasLen, INDEX_FORMAT_VERSION, Index, TantivyDocument, Term};
+use tantivy::{Directory, HasLen, Index, TantivyDocument, Term, INDEX_FORMAT_VERSION};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 struct FileMetadata {
@@ -971,7 +971,9 @@ async fn main() -> Result<()> {
     trace!("Magic: {MAGIC_BYTES:?}");
     trace!(
         "[Header] data block size:{}, file metadata block size: {} file metadata block crc32:{}",
-        header.total_data_block_size, header.file_metadata_size, header.file_metadata_crc32
+        header.total_data_block_size,
+        header.file_metadata_size,
+        header.file_metadata_crc32
     );
 
     let header_bytes: Vec<u8> = header.clone().into();

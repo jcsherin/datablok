@@ -3,7 +3,7 @@ use crate::index::ImmutableIndex;
 use schema::Schema;
 use tantivy::collector::Collector;
 use tantivy::query::Query;
-use tantivy::{IndexReader, Searcher, schema};
+use tantivy::{schema, IndexReader, Searcher};
 
 pub struct QuerySession<'a> {
     index: &'a ImmutableIndex,

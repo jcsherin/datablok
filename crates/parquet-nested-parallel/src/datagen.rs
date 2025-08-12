@@ -4,10 +4,10 @@ use arrow::array::{
 };
 use arrow::datatypes::{SchemaRef, UInt8Type};
 use parquet_nested_common::prelude::{
-    PHONE_NUMBER_FIELD_INDEX, PHONE_TYPE_FIELD_INDEX, get_contact_phone_fields,
+    get_contact_phone_fields, PHONE_NUMBER_FIELD_INDEX, PHONE_TYPE_FIELD_INDEX,
 };
-use rand::SeedableRng;
 use rand::prelude::StdRng;
+use rand::SeedableRng;
 use std::error::Error;
 use std::fmt::Write;
 use std::sync::Arc;

@@ -4,7 +4,7 @@ use once_cell::sync::Lazy;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet_nested_common::prelude::get_contact_schema;
 use parquet_nested_parallel::pipeline::{
-    PipelineConfig, PipelineConfigBuilder, PipelineConfigError, run_pipeline,
+    run_pipeline, PipelineConfig, PipelineConfigBuilder, PipelineConfigError,
 };
 use std::fs::File;
 use std::path::{Path, PathBuf};

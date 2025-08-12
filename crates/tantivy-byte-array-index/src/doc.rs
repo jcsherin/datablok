@@ -3,7 +3,7 @@ use crate::error::Result;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
-use tantivy::schema::{Field, INDEXED, STORED, Schema, SchemaBuilder, TEXT, Value};
+use tantivy::schema::{Field, Schema, SchemaBuilder, Value, INDEXED, STORED, TEXT};
 use tantivy::{DocAddress, Searcher, TantivyDocument};
 
 /// A global counter to ensure each ID is unique for this process.

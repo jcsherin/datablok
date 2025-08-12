@@ -5,12 +5,12 @@
 //! occur with high frequency, while most other values are rare (a long-tail distribution).
 //! This is useful for simulating realistic workloads.
 
-use fake::Fake;
 use fake::faker::name::en::{FirstName, LastName};
+use fake::Fake;
 use parquet_nested_common::contact::PhoneType;
-use rand::Rng;
-use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
+use rand::distr::Distribution;
+use rand::Rng;
 use std::fmt::Write;
 
 /// Probability distribution for generating `PhoneType` enum variants.
@@ -123,8 +123,8 @@ pub fn generate_name(rng: &mut impl Rng, name_buf: &mut String) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::SeedableRng;
     use rand::rngs::StdRng;
+    use rand::SeedableRng;
     use std::collections::HashMap;
 
     /// Defines the acceptable deviation from predefined data skew in the final generated data due

@@ -31,19 +31,15 @@ fn create_data() -> Vec<Contact> {
             .build(),
         ContactBuilder::default()
             .with_name("Diana")
-            .with_phones(vec![
-                PhoneBuilder::default()
-                    .with_number("555-9999")
-                    .with_phone_type(PhoneType::Work)
-                    .build(),
-            ])
+            .with_phones(vec![PhoneBuilder::default()
+                .with_number("555-9999")
+                .with_phone_type(PhoneType::Work)
+                .build()])
             .build(),
         ContactBuilder::default()
-            .with_phones(vec![
-                PhoneBuilder::default()
-                    .with_phone_type(PhoneType::Home)
-                    .build(),
-            ])
+            .with_phones(vec![PhoneBuilder::default()
+                .with_phone_type(PhoneType::Home)
+                .build()])
             .build(),
     ]
 }

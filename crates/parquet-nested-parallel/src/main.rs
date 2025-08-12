@@ -1,7 +1,7 @@
 use human_format::Formatter;
-use log::{LevelFilter, info};
+use log::{info, LevelFilter};
 use parquet_nested_common::prelude::get_contact_schema;
-use parquet_nested_parallel::pipeline::{PipelineConfigBuilder, run_pipeline};
+use parquet_nested_parallel::pipeline::{run_pipeline, PipelineConfigBuilder};
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;

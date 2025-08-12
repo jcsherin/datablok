@@ -1,9 +1,9 @@
 pub mod boolean_query {
     use crate::error::Error::FieldNotFound;
     use crate::error::Result;
-    use tantivy::Term;
     use tantivy::query::{BooleanQuery, Occur, PhraseQuery, Query, TermQuery};
     use tantivy::schema::{Field, IndexRecordOption, Schema};
+    use tantivy::Term;
 
     fn girl_term_query(title: Field) -> Box<dyn Query> {
         Box::new(TermQuery::new(
