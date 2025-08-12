@@ -13,7 +13,10 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 
-    env_logger::builder().filter_level(LevelFilter::Info).init();
+    env_logger::builder()
+        .format_timestamp_micros()
+        .filter_level(LevelFilter::Info)
+        .init();
 
     const TARGET_CONTACTS: usize = 10_000_000;
     const RECORD_BATCH_SIZE: usize = 4096;
@@ -52,5 +55,6 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     );
     info!("In-Memory Throughput: {gb_per_sec:.2} GB/s");
 
+    info!("Exiting main");
     Ok(())
 }
