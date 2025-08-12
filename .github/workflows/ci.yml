@@ -46,7 +46,7 @@ jobs:
         run: cargo clippy --workspace -- -D warnings
 
       - name: Run tests
-        run: cargo test --workspace
+        run: RUST_LOG=info cargo test --workspace -- --nocapture
 
       - name: Build project
         run: cargo build --workspace

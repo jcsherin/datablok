@@ -2916,6 +2916,7 @@ dependencies = [
  "fake",
  "human_format",
  "log",
+ "once_cell",
  "parquet",
  "parquet-nested-common",
  "rand 0.9.1",

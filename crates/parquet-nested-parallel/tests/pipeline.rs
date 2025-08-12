@@ -1,10 +1,16 @@
 use log::info;
+use once_cell::sync::Lazy;
+
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet_nested_common::prelude::get_contact_schema;
 use parquet_nested_parallel::pipeline::{PipelineConfig, PipelineConfigBuilder, run_pipeline};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use tempfile::{Builder, TempDir};
+
+static INIT: Lazy<()> = Lazy::new(|| {
+    let _ = env_logger::builder().is_test(true).try_init();
+});
 
 fn assert_pipeline_properties(temp_dir: &TempDir, config: &PipelineConfig) {
     let _ = run_pipeline(&config).expect("Pipeline failed to run");
@@ -56,12 +62,13 @@ macro_rules! pipeline_test {
     ($name:ident, $num_writers:expr) => {
         #[test]
         fn $name() {
+            Lazy::force(&INIT);
             let total_threads = rayon::current_num_threads();
 
             // This is to skip tests in GitHub Actions CI with less cpu cores (~4)
             if total_threads <= $num_writers {
                 info!(
-                    "Skipping test because num_writers ({}) >= total_threads ({}) (GitHub CI runs with 4 cores)",
+                    "Skipping test because num_writers ({}) >= total_threads ({})",
                     $num_writers, total_threads
                 );
                 return;
@@ -116,6 +123,7 @@ fn find_parquet_files(dir: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn test_config_error_with_zero_producers() {
+    Lazy::force(&INIT);
     // Use a number of writers guaranteed to cause a ZeroProducers error.
     let expected_num_writers = rayon::current_num_threads() + 1;
     let expected_total_threads = rayon::current_num_threads();
