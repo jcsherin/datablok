@@ -52,9 +52,9 @@ fn assert_pipeline_properties(temp_dir: &TempDir, config: &PipelineConfig) {
     // Assert total number of rows written across all files matches target count in config.
     assert_eq!(
         total_rows,
-        config.target_contacts(),
-        "Total rows: {total_rows} in output files do not match target contacts: {target_contacts}.",
-        target_contacts = config.target_contacts(),
+        config.target_records(),
+        "Total rows: {total_rows} in output files do not match target records: {expected_rows_count}.",
+        expected_rows_count = config.target_records(),
     );
 
     // Teardown: The `temp_dir` is cleaned up automatically when it gets dropped here.
@@ -82,7 +82,7 @@ macro_rules! pipeline_test {
                 .unwrap();
 
             let config = PipelineConfigBuilder::new()
-                .with_target_contacts(10_000)
+                .with_target_records(10_000)
                 .with_record_batch_size(1024)
                 .with_output_dir(temp_dir.path().to_path_buf())
                 .with_output_filename("test_output".to_string())

@@ -19,8 +19,8 @@ use std::{fmt, thread};
 /// This struct centralizes all the tunable parameters for a pipeline run.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
-    /// The total number of contacts to generate.
-    target_contacts: usize,
+    /// The total number of record to generate.
+    target_records: usize,
     /// The number of concurrent writer threads.
     num_writers: usize,
     /// The number of producer threads in the rayon thread pool.
@@ -36,8 +36,8 @@ pub struct PipelineConfig {
 }
 
 impl PipelineConfig {
-    pub fn target_contacts(&self) -> usize {
-        self.target_contacts
+    pub fn target_records(&self) -> usize {
+        self.target_records
     }
 
     pub fn num_writers(&self) -> usize {
@@ -48,7 +48,7 @@ impl PipelineConfig {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
-            target_contacts: 10_000,
+            target_records: 10_000,
             num_writers: 2,
             num_producers: 8,
             record_batch_size: 1024,
@@ -104,8 +104,8 @@ impl PipelineConfigBuilder {
         }
     }
 
-    pub fn with_target_contacts(mut self, target_contacts: usize) -> Self {
-        self.inner.target_contacts = target_contacts;
+    pub fn with_target_records(mut self, target_records: usize) -> Self {
+        self.inner.target_records = target_records;
         self
     }
 
@@ -190,7 +190,7 @@ fn create_writer_thread(
         let mut human_formatter = Formatter::new();
         human_formatter.with_decimals(0).with_separator("");
         info!(
-            "Finished writing parquet file: {path}. Wrote {count} contacts.",
+            "Finished writing parquet file: {path}. Wrote {count} records.",
             path = path.display(),
             count = human_formatter.format(count as f64)
         );
@@ -225,7 +225,7 @@ pub fn run_pipeline(
         .unwrap();
 
     let processing_result_from_pool = pool.install(|| {
-        let num_batches = config.target_contacts.div_ceil(config.record_batch_size);
+        let num_batches = config.target_records.div_ceil(config.record_batch_size);
         let parquet_schema = config.arrow_schema.clone();
         let phone_number_batch_size =
             ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND.div_ceil(num_batches);
@@ -235,7 +235,7 @@ pub fn run_pipeline(
             |batch_index| -> Result<(), Box<dyn Error + Send + Sync>> {
                 let start_row = batch_index * config.record_batch_size;
                 let current_batch_size =
-                    std::cmp::min(config.record_batch_size, config.target_contacts - start_row);
+                    std::cmp::min(config.record_batch_size, config.target_records - start_row);
 
                 if current_batch_size == 0 {
                     return Ok(());
@@ -306,7 +306,7 @@ pub fn run_pipeline(
     }
 
     let elapsed_time = start_time.elapsed();
-    let records_per_sec = (config.target_contacts as f64) / elapsed_time.as_secs_f64();
+    let records_per_sec = (config.target_records as f64) / elapsed_time.as_secs_f64();
 
     Ok(PipelineMetrics {
         total_in_memory_bytes,

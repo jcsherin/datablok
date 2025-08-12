@@ -8,21 +8,21 @@ fn pipeline_throughput_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("pipeline_throughput_benchmark");
     group.measurement_time(Duration::from_secs(60));
 
-    let target_contacts_sizes = &[100_000, 1_000_000, 10_000_000];
+    let target_record_counts = &[100_000, 1_000_000, 10_000_000];
     let num_writers = 4;
     let num_producers = rayon::current_num_threads().saturating_sub(num_writers);
 
-    for &target_contacts in target_contacts_sizes {
+    for &count in target_record_counts {
         group.bench_function(
             format!(
-                "{target_contacts} contacts, {num_writers} parquet writer threads, {num_producers} data generator threads",
+                "{count} records, {num_writers} parquet writer threads, {num_producers} data generator threads",
             ),
             |b| {
                 b.iter_batched(
                     || {
                         let temp_dir = tempdir().unwrap();
                         let config = PipelineConfigBuilder::new()
-                            .with_target_contacts(target_contacts)
+                            .with_target_records(count)
                             .with_num_writers(num_writers)
                             .with_record_batch_size(4096)
                             .with_output_dir(temp_dir.path().to_path_buf())

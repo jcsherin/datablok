@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .filter_level(LevelFilter::Info)
         .init();
 
-    const TARGET_CONTACTS: usize = 10_000_000;
+    const TARGET_RECORDS: usize = 10_000_000;
     const RECORD_BATCH_SIZE: usize = 4096;
     const NUM_WRITERS: usize = 4; // This is still coupled to the 4 hardcoded channels in pipeline.rs
     let output_dir = PathBuf::from("output_parquet");
@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     fs::create_dir_all(&output_dir)?;
 
     let config = PipelineConfigBuilder::new()
-        .with_target_contacts(TARGET_CONTACTS)
+        .with_target_records(TARGET_RECORDS)
         .with_num_writers(NUM_WRITERS)
         .with_record_batch_size(RECORD_BATCH_SIZE)
         .with_output_dir(output_dir)
