@@ -1,9 +1,10 @@
 use crate::datagen::ContactRecordBatchGenerator;
+use arrow::datatypes::{Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use human_format::Formatter;
 use log::info;
 use parquet::arrow::ArrowWriter;
-use parquet_nested_common::prelude::*;
+
 use rayon::prelude::*;
 use std::error::Error;
 use std::fmt::Debug;
@@ -30,6 +31,8 @@ pub struct PipelineConfig {
     output_dir: PathBuf,
     /// The filename to use when output Parquet files are written.
     output_filename: String,
+    /// The Arrow Schema
+    arrow_schema: SchemaRef,
 }
 
 impl PipelineConfig {
@@ -51,6 +54,7 @@ impl Default for PipelineConfig {
             record_batch_size: 1024,
             output_dir: PathBuf::from("output"),
             output_filename: "out".to_string(),
+            arrow_schema: std::sync::Arc::new(Schema::empty()),
         }
     }
 }
@@ -61,6 +65,7 @@ pub enum PipelineConfigError {
         total_threads: usize,
         num_writers: usize,
     },
+    MissingSchema,
 }
 
 impl fmt::Display for PipelineConfigError {
@@ -73,6 +78,12 @@ impl fmt::Display for PipelineConfigError {
                 write!(
                     f,
                     "No. of producer threads must be greater than zero. Total threads: {total_threads}. Writer threads: {num_writers}.",
+                )
+            }
+            PipelineConfigError::MissingSchema => {
+                write!(
+                    f,
+                    "The pipeline config is missing an Arrow schema definition.",
                 )
             }
         }
@@ -118,6 +129,11 @@ impl PipelineConfigBuilder {
         self
     }
 
+    pub fn with_arrow_schema(mut self, arrow_schema: SchemaRef) -> Self {
+        self.inner.arrow_schema = arrow_schema;
+        self
+    }
+
     pub fn try_build(mut self) -> Result<PipelineConfig, PipelineConfigError> {
         let total_threads = rayon::current_num_threads();
         let num_producers = total_threads.saturating_sub(self.inner.num_writers);
@@ -128,6 +144,10 @@ impl PipelineConfigBuilder {
                 total_threads,
                 num_writers: self.inner.num_writers,
             });
+        }
+
+        if self.inner.arrow_schema.fields().is_empty() {
+            return Err(PipelineConfigError::MissingSchema);
         }
 
         Ok(self.inner)
@@ -148,11 +168,11 @@ pub struct PipelineMetrics {
 fn create_writer_thread(
     path: PathBuf,
     rx: mpsc::Receiver<RecordBatch>,
+    parquet_schema: SchemaRef,
 ) -> thread::JoinHandle<Result<usize, Box<dyn Error + Send + Sync>>> {
     thread::spawn(move || {
-        let parquet_schema = get_contact_schema();
         let parquet_file = File::create(path)?;
-        let mut parquet_writer = ArrowWriter::try_new(parquet_file, parquet_schema.clone(), None)?;
+        let mut parquet_writer = ArrowWriter::try_new(parquet_file, parquet_schema, None)?;
 
         let mut count = 0;
         let mut total_bytes = 0;
@@ -192,7 +212,7 @@ pub fn run_pipeline(
         let output_filename = format!("{filename}_{i}.parquet", filename = config.output_filename);
         let output_path = config.output_dir.join(output_filename);
 
-        let writer = create_writer_thread(output_path, rx);
+        let writer = create_writer_thread(output_path, rx, config.arrow_schema.clone());
 
         writers.push(writer);
         senders.push(tx);
@@ -205,7 +225,7 @@ pub fn run_pipeline(
 
     let processing_result_from_pool = pool.install(|| {
         let num_batches = config.target_contacts.div_ceil(config.record_batch_size);
-        let parquet_schema = get_contact_schema();
+        let parquet_schema = config.arrow_schema.clone();
         let phone_number_batch_size =
             ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND.div_ceil(num_batches);
 

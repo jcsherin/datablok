@@ -1,4 +1,5 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
+use parquet_nested_common::prelude::get_contact_schema;
 use parquet_nested_parallel::pipeline::{PipelineConfigBuilder, run_pipeline};
 use std::time::Duration;
 use tempfile::tempdir;
@@ -26,6 +27,7 @@ fn pipeline_throughput_benchmark(c: &mut Criterion) {
                             .with_record_batch_size(4096)
                             .with_output_dir(temp_dir.path().to_path_buf())
                             .with_output_filename("contacts".to_string())
+                            .with_arrow_schema(get_contact_schema())
                             .try_build()
                             .unwrap();
 

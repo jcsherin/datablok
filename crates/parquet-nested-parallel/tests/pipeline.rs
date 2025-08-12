@@ -3,7 +3,9 @@ use once_cell::sync::Lazy;
 
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet_nested_common::prelude::get_contact_schema;
-use parquet_nested_parallel::pipeline::{PipelineConfig, PipelineConfigBuilder, run_pipeline};
+use parquet_nested_parallel::pipeline::{
+    PipelineConfig, PipelineConfigBuilder, PipelineConfigError, run_pipeline,
+};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use tempfile::{Builder, TempDir};
@@ -85,6 +87,7 @@ macro_rules! pipeline_test {
                 .with_output_dir(temp_dir.path().to_path_buf())
                 .with_output_filename("test_output".to_string())
                 .with_num_writers($num_writers)
+                .with_arrow_schema(get_contact_schema())
                 .try_build()
                 .unwrap();
 
@@ -130,11 +133,12 @@ fn test_config_error_with_zero_producers() {
 
     let config_result = PipelineConfigBuilder::new()
         .with_num_writers(expected_num_writers)
+        .with_arrow_schema(get_contact_schema())
         .try_build();
 
     match config_result {
         Err(
-            error @ parquet_nested_parallel::pipeline::PipelineConfigError::ZeroProducers {
+            error @ PipelineConfigError::ZeroProducers {
                 total_threads,
                 num_writers,
             },
@@ -158,6 +162,33 @@ fn test_config_error_with_zero_producers() {
                 "Error message did not match expected."
             );
         }
+        Err(PipelineConfigError::MissingSchema) => {
+            panic!("Expected ZeroProducers error, but got MissingSchema error.")
+        }
         Ok(_) => panic!("Expected ZeroProducers error, but got Ok result."),
+    }
+}
+
+#[test]
+fn test_config_error_missing_schema() {
+    Lazy::force(&INIT);
+
+    let config_result = PipelineConfigBuilder::new().try_build();
+
+    match config_result {
+        Err(PipelineConfigError::MissingSchema) => {
+            let expected_error_message =
+                "The pipeline config is missing an Arrow schema definition.";
+            assert_eq!(
+                config_result.unwrap_err().to_string(),
+                expected_error_message,
+                "Error message did not match expected."
+            );
+        }
+        Err(e) => panic!(
+            "Expected MissingSchema error, but got a different error: {:?}",
+            e
+        ),
+        Ok(_) => panic!("Expected MissingSchema error, but got Ok result."),
     }
 }

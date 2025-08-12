@@ -1,5 +1,6 @@
 use human_format::Formatter;
 use log::{LevelFilter, info};
+use parquet_nested_common::prelude::get_contact_schema;
 use parquet_nested_parallel::pipeline::{PipelineConfigBuilder, run_pipeline};
 use std::error::Error;
 use std::fs;
@@ -31,6 +32,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .with_record_batch_size(RECORD_BATCH_SIZE)
         .with_output_dir(output_dir)
         .with_output_filename("contacts".to_string())
+        .with_arrow_schema(get_contact_schema())
         .try_build()?;
 
     info!("Config: {config:?}");
