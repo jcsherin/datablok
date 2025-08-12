@@ -1,3 +1,4 @@
+use log::info;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet_nested_common::prelude::get_contact_schema;
 use parquet_nested_parallel::pipeline::{PipelineConfig, PipelineConfigBuilder, run_pipeline};
@@ -55,6 +56,17 @@ macro_rules! pipeline_test {
     ($name:ident, $num_writers:expr) => {
         #[test]
         fn $name() {
+            let total_threads = rayon::current_num_threads();
+
+            // This is to skip tests in GitHub Actions CI with less cpu cores (~4)
+            if total_threads <= $num_writers {
+                info!(
+                    "Skipping test because num_writers ({}) >= total_threads ({}) (GitHub CI runs with 4 cores)",
+                    $num_writers, total_threads
+                );
+                return;
+            }
+
             let temp_dir = Builder::new()
                 .prefix("pipeline-correctness-test")
                 .tempdir()
@@ -100,4 +112,44 @@ fn find_parquet_files(dir: &Path) -> Vec<PathBuf> {
 
     paths.sort();
     paths
+}
+
+#[test]
+fn test_config_error_with_zero_producers() {
+    // Use a number of writers guaranteed to cause a ZeroProducers error.
+    let expected_num_writers = rayon::current_num_threads() + 1;
+    let expected_total_threads = rayon::current_num_threads();
+
+    let config_result = PipelineConfigBuilder::new()
+        .with_num_writers(expected_num_writers)
+        .try_build();
+
+    match config_result {
+        Err(
+            error @ parquet_nested_parallel::pipeline::PipelineConfigError::ZeroProducers {
+                total_threads,
+                num_writers,
+            },
+        ) => {
+            assert_eq!(
+                total_threads, expected_total_threads,
+                "Total threads in error did not match expected."
+            );
+            assert_eq!(
+                num_writers, expected_num_writers,
+                "Number of writers in error did not match expected."
+            );
+
+            let expected_error_message = format!(
+                "No. of producer threads must be greater than zero. Total threads: {}. Writer threads: {}.",
+                expected_total_threads, expected_num_writers
+            );
+            assert_eq!(
+                error.to_string(),
+                expected_error_message,
+                "Error message did not match expected."
+            );
+        }
+        Ok(_) => panic!("Expected ZeroProducers error, but got Ok result."),
+    }
 }
