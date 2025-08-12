@@ -171,7 +171,7 @@ fn create_writer_thread(
     parquet_schema: SchemaRef,
 ) -> thread::JoinHandle<Result<usize, Box<dyn Error + Send + Sync>>> {
     thread::spawn(move || {
-        let parquet_file = File::create(path)?;
+        let parquet_file = File::create(path.as_path())?;
         let mut parquet_writer = ArrowWriter::try_new(parquet_file, parquet_schema, None)?;
 
         let mut count = 0;
@@ -190,8 +190,9 @@ fn create_writer_thread(
         let mut human_formatter = Formatter::new();
         human_formatter.with_decimals(0).with_separator("");
         info!(
-            "Finished writing parquet file. Wrote {} contacts.",
-            human_formatter.format(count as f64)
+            "Finished writing parquet file: {path}. Wrote {count} contacts.",
+            path = path.display(),
+            count = human_formatter.format(count as f64)
         );
 
         Ok(total_bytes)
