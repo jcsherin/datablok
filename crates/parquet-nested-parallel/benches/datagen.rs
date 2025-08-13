@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use parquet_nested_common::prelude::get_contact_schema;
+use parquet_nested_parallel::datagen::RecordBatchGenerator;
 use parquet_nested_parallel::datagen::{ContactGeneratorFactory, RecordBatchGeneratorFactory};
 use parquet_nested_parallel::skew::{generate_name, generate_phone_template};
 use rand::prelude::StdRng;

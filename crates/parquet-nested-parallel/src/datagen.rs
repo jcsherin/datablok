@@ -15,8 +15,9 @@ use std::sync::Arc;
 
 /// A factory for creating `RecordBatchGenerator` instances.
 pub trait RecordBatchGeneratorFactory: Send + Sync {
+    type Generator: RecordBatchGenerator + Send;
     /// Create a new generator for a specific batch
-    fn create_generator(&self, batch_index: usize) -> Box<dyn RecordBatchGenerator + Send>;
+    fn create_generator(&self, batch_index: usize) -> Self::Generator;
 }
 
 /// A single instance will generate one `RecordBatch`.
@@ -58,14 +59,12 @@ impl ContactGeneratorFactory {
 }
 
 impl RecordBatchGeneratorFactory for ContactGeneratorFactory {
-    fn create_generator(&self, batch_index: usize) -> Box<dyn RecordBatchGenerator + Send> {
+    type Generator = ContactRecordBatchGenerator;
+
+    fn create_generator(&self, batch_index: usize) -> Self::Generator {
         let phone_id_offset = self.phone_numbers_per_batch * batch_index;
 
-        Box::new(ContactRecordBatchGenerator::new(
-            self.schema.clone(),
-            batch_index as u64,
-            phone_id_offset,
-        ))
+        ContactRecordBatchGenerator::new(self.schema.clone(), batch_index as u64, phone_id_offset)
     }
 }
 

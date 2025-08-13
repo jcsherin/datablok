@@ -1,3 +1,4 @@
+use crate::datagen::RecordBatchGenerator;
 use crate::datagen::RecordBatchGeneratorFactory;
 use arrow::datatypes::{Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
