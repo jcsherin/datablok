@@ -3,6 +3,7 @@ use once_cell::sync::Lazy;
 
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet_nested_common::prelude::get_contact_schema;
+use parquet_nested_parallel::datagen::ContactGeneratorFactory;
 use parquet_nested_parallel::pipeline::{
     run_pipeline, PipelineConfig, PipelineConfigBuilder, PipelineConfigError,
 };
@@ -15,7 +16,8 @@ static INIT: Lazy<()> = Lazy::new(|| {
 });
 
 fn assert_pipeline_properties(temp_dir: &TempDir, config: &PipelineConfig) {
-    let _ = run_pipeline(&config).expect("Pipeline failed to run");
+    let factory = ContactGeneratorFactory::from_config(config.clone());
+    let _ = run_pipeline(&config, &factory).expect("Pipeline failed to run");
 
     // Verify the output is correct.
     let output_files = find_parquet_files(temp_dir.path());

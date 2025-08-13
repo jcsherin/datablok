@@ -1,5 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use parquet_nested_common::prelude::get_contact_schema;
+use parquet_nested_parallel::datagen::ContactGeneratorFactory;
 use parquet_nested_parallel::pipeline::{run_pipeline, PipelineConfigBuilder};
 use std::time::Duration;
 use tempfile::tempdir;
@@ -30,12 +31,13 @@ fn pipeline_throughput_benchmark(c: &mut Criterion) {
                             .with_arrow_schema(get_contact_schema())
                             .try_build()
                             .unwrap();
+                        let factory = ContactGeneratorFactory::from_config(config.clone());
 
-                        (config, temp_dir)
+                        (factory, config, temp_dir)
                     },
-                    |(config, _temp_dir)| {
+                    |(factory, config, _temp_dir)| {
                         // The code to be benchmarked
-                        black_box(run_pipeline(&config).unwrap());
+                        black_box(run_pipeline(&config, &factory).unwrap());
                     },
                     BatchSize::SmallInput,
                 );

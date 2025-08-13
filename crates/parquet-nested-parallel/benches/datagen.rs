@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use parquet_nested_common::prelude::get_contact_schema;
-use parquet_nested_parallel::datagen::ContactRecordBatchGenerator;
+use parquet_nested_parallel::datagen::{ContactGeneratorFactory, RecordBatchGeneratorFactory};
 use parquet_nested_parallel::skew::{generate_name, generate_phone_template};
 use rand::prelude::StdRng;
 use rand::SeedableRng;
@@ -31,14 +31,25 @@ fn contact_record_batch_generator_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("ContactRecordBatchGenerator");
     group.measurement_time(Duration::from_secs(20));
 
-    let schema = get_contact_schema();
-    const SEED: u64 = 0;
+    const BATCH_INDEX: usize = 123;
     const RECORD_BATCH_SIZES: &[usize] = &[1024, 2048, 4096, 8192];
 
     for &size in RECORD_BATCH_SIZES {
         group.bench_function(format!("generate {} records", size), |b| {
-            let generator = ContactRecordBatchGenerator::new(schema.clone());
-            b.iter(|| black_box(generator.generate(SEED, size, 0).unwrap()))
+            let target_records = 1_000_000;
+            let record_batch_size = 4096;
+            let total_batches = target_records / record_batch_size;
+
+            let factory = ContactGeneratorFactory::new(get_contact_schema(), total_batches);
+
+            b.iter(|| {
+                black_box(
+                    factory
+                        .create_generator(BATCH_INDEX)
+                        .generate(size)
+                        .unwrap(),
+                )
+            })
         });
     }
 }

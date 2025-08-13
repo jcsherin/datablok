@@ -1,3 +1,4 @@
+use crate::pipeline::PipelineConfig;
 use crate::skew::{generate_name, generate_phone_template, generate_phones_count};
 use arrow::array::{
     ListBuilder, RecordBatch, StringBuilder, StringDictionaryBuilder, StructBuilder,
@@ -12,32 +13,89 @@ use std::error::Error;
 use std::fmt::Write;
 use std::sync::Arc;
 
+/// A factory for creating `RecordBatchGenerator` instances.
+pub trait RecordBatchGeneratorFactory: Send + Sync {
+    /// Create a new generator for a specific batch
+    fn create_generator(&self, batch_index: usize) -> Box<dyn RecordBatchGenerator + Send>;
+}
+
+/// A single instance will generate one `RecordBatch`.
+pub trait RecordBatchGenerator {
+    /// A stateless method which is used for generating a single RecordBatch
+    /// using data skew primitives.
+    fn generate(&self, count: usize) -> Result<RecordBatch, Box<dyn Error + Send + Sync>>;
+}
+
+pub struct ContactGeneratorFactory {
+    schema: SchemaRef,
+    phone_numbers_per_batch: usize,
+}
+
+impl ContactGeneratorFactory {
+    pub fn from_config(config: PipelineConfig) -> Self {
+        let phone_numbers_per_batch =
+            ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND.div_ceil(config.total_batches());
+
+        Self {
+            schema: config.arrow_schema().clone(),
+            phone_numbers_per_batch,
+        }
+    }
+
+    pub fn new(schema: SchemaRef, total_batches: usize) -> Self {
+        let phone_numbers_per_batch =
+            ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND.div_ceil(total_batches);
+
+        Self {
+            schema,
+            phone_numbers_per_batch,
+        }
+    }
+
+    pub fn phone_numbers_per_batch(&self) -> usize {
+        self.phone_numbers_per_batch
+    }
+}
+
+impl RecordBatchGeneratorFactory for ContactGeneratorFactory {
+    fn create_generator(&self, batch_index: usize) -> Box<dyn RecordBatchGenerator + Send> {
+        let phone_id_offset = self.phone_numbers_per_batch * batch_index;
+
+        Box::new(ContactRecordBatchGenerator::new(
+            self.schema.clone(),
+            batch_index as u64,
+            phone_id_offset,
+        ))
+    }
+}
+
 #[derive(Debug)]
 pub struct ContactRecordBatchGenerator {
     schema: SchemaRef,
+    seed: u64,
+    phone_id_offset: usize,
 }
 
 impl ContactRecordBatchGenerator {
-    const PHONE_NUMBER_LENGTH: usize = 15;
+    const PHONE_NUMBER_LENGTH: usize = 15; // +91 12345 56789 (15 bytes)
     pub const PHONE_NUMBER_UPPER_BOUND: usize = 100_000_000; // for an 8-digit unique suffix
-
-    pub fn new(schema: SchemaRef) -> Self {
-        ContactRecordBatchGenerator { schema }
+    pub fn new(schema: SchemaRef, seed: u64, phone_id_offset: usize) -> Self {
+        Self {
+            schema,
+            seed,
+            phone_id_offset,
+        }
     }
+}
 
-    pub fn generate(
-        &self,
-        seed: u64,
-        count: usize,
-        phone_id_offset: usize,
-    ) -> Result<RecordBatch, Box<dyn Error + Send + Sync>> {
-        let mut phone_number_counter = phone_id_offset;
-        // info!("seed: {seed}, count: {count}, phone_number_start: {phone_number_counter}");
+impl RecordBatchGenerator for ContactRecordBatchGenerator {
+    fn generate(&self, count: usize) -> Result<RecordBatch, Box<dyn Error + Send + Sync>> {
+        let mut phone_number_counter = self.phone_id_offset;
 
         // Invariant: upper bound should not exceed 100M (8 digits)
         assert!(
             phone_number_counter + count < Self::PHONE_NUMBER_UPPER_BOUND,
-            "The number of phone numbers to be generated must be less than {}.",
+            "Phone number overflow exceeds {}. (offset={phone_number_counter} + count={count})",
             Self::PHONE_NUMBER_UPPER_BOUND
         );
 
@@ -51,7 +109,7 @@ impl ContactRecordBatchGenerator {
         );
         let mut phones = ListBuilder::new(phone);
 
-        let rng = &mut StdRng::seed_from_u64(seed);
+        let rng = &mut StdRng::seed_from_u64(self.seed);
         let mut name_buf = String::with_capacity(32);
 
         for _ in 0..count {
@@ -124,29 +182,51 @@ mod tests {
     use arrow::datatypes::DataType;
     use parquet_nested_common::prelude::get_contact_schema;
 
+    fn setup_test_factory() -> ContactGeneratorFactory {
+        let schema = get_contact_schema();
+
+        // self.target_records.div_ceil(self.record_batch_size)
+        let target_records = 1_000_000;
+        let record_batch_size = 4096;
+        let total_batches = target_records / record_batch_size;
+
+        ContactGeneratorFactory::new(schema, total_batches)
+    }
+
+    const BATCH_INDEX: usize = 123;
+    const BATCH_EMPTY: usize = 0;
+    const BATCH_SMALL: usize = 100;
+    const BATCH_LARGE: usize = 100_000;
+
     #[test]
     fn test_generator_properties() {
-        let schema = get_contact_schema();
-        let generator = ContactRecordBatchGenerator::new(schema.clone());
+        let factory = setup_test_factory();
 
-        let count = 100;
-        let batch = generator.generate(0, count, 0).unwrap();
+        let batch = factory
+            .create_generator(BATCH_INDEX)
+            .generate(BATCH_SMALL)
+            .unwrap();
 
-        assert_eq!(batch.num_rows(), count);
-        assert_eq!(batch.schema(), schema);
+        assert_eq!(batch.num_rows(), BATCH_SMALL);
+        assert_eq!(batch.schema(), get_contact_schema());
     }
 
     #[test]
     fn test_generator_is_deterministic() {
-        let schema = get_contact_schema();
+        let factory1 = setup_test_factory();
+        let batch1 = factory1
+            .create_generator(BATCH_INDEX)
+            .generate(BATCH_SMALL)
+            .unwrap();
 
-        let generator1 = ContactRecordBatchGenerator::new(schema.clone());
+        let factory2 = setup_test_factory();
+        let batch2 = factory2
+            .create_generator(BATCH_INDEX)
+            .generate(BATCH_SMALL)
+            .unwrap();
 
-        let count = 100;
-        let batch1 = generator1.generate(0, count, 0).unwrap();
-
-        let generator2 = ContactRecordBatchGenerator::new(schema);
-        let batch2 = generator2.generate(0, count, 0).unwrap();
+        assert_eq!(batch1.num_rows(), BATCH_SMALL);
+        assert_eq!(batch1.schema(), get_contact_schema());
 
         // Compare batches for equality (content and schema)
         assert_eq!(batch1.num_rows(), batch2.num_rows());
@@ -183,13 +263,13 @@ mod tests {
 
     #[test]
     fn test_generator_100k_null_distribution() {
-        let schema = get_contact_schema();
-        let generator = ContactRecordBatchGenerator::new(schema);
+        let factory = setup_test_factory();
+        let batch = factory
+            .create_generator(BATCH_INDEX)
+            .generate(BATCH_LARGE)
+            .unwrap();
 
-        let count = 100_000;
-        let batch = generator.generate(0, count, 0).unwrap();
-
-        assert_eq!(batch.num_rows(), count);
+        assert_eq!(batch.num_rows(), BATCH_LARGE);
 
         // Assert that the null count for the name column is within an expected
         // statistical range. `generate_name` has a 20% chance of returning None.
@@ -198,8 +278,8 @@ mod tests {
 
         let expected_null_ratio = 0.2;
         let tolerance = 0.05;
-        let lower_bound = (count as f64 * (expected_null_ratio - tolerance)) as usize;
-        let upper_bound = (count as f64 * (expected_null_ratio + tolerance)) as usize;
+        let lower_bound = (BATCH_LARGE as f64 * (expected_null_ratio - tolerance)) as usize;
+        let upper_bound = (BATCH_LARGE as f64 * (expected_null_ratio + tolerance)) as usize;
 
         assert!(
             null_count >= lower_bound && null_count <= upper_bound,
@@ -216,8 +296,10 @@ mod tests {
         let phones_null_count = phones_col.null_count();
 
         let expected_phones_null_ratio = 0.4;
-        let phones_lower_bound = (count as f64 * (expected_phones_null_ratio - tolerance)) as usize;
-        let phones_upper_bound = (count as f64 * (expected_phones_null_ratio + tolerance)) as usize;
+        let phones_lower_bound =
+            (BATCH_LARGE as f64 * (expected_phones_null_ratio - tolerance)) as usize;
+        let phones_upper_bound =
+            (BATCH_LARGE as f64 * (expected_phones_null_ratio + tolerance)) as usize;
 
         assert!(
             phones_null_count >= phones_lower_bound && phones_null_count <= phones_upper_bound,
@@ -230,12 +312,14 @@ mod tests {
 
     #[test]
     fn test_generator_empty_batch() {
-        let schema = get_contact_schema();
-        let generator = ContactRecordBatchGenerator::new(schema.clone());
+        let factory = setup_test_factory();
 
-        let batch = generator.generate(0, 0, 0).unwrap();
+        let batch = factory
+            .create_generator(BATCH_INDEX)
+            .generate(BATCH_EMPTY)
+            .unwrap();
 
-        assert_eq!(batch.num_rows(), 0);
-        assert_eq!(batch.schema(), schema);
+        assert_eq!(batch.num_rows(), BATCH_EMPTY);
+        assert_eq!(batch.schema(), get_contact_schema());
     }
 }

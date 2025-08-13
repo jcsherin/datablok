@@ -1,6 +1,7 @@
 use human_format::Formatter;
 use log::{info, LevelFilter};
 use parquet_nested_common::prelude::get_contact_schema;
+use parquet_nested_parallel::datagen::ContactGeneratorFactory;
 use parquet_nested_parallel::pipeline::{run_pipeline, PipelineConfigBuilder};
 use std::error::Error;
 use std::fs;
@@ -37,7 +38,8 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     info!("Config: {config:?}");
 
-    let metrics = run_pipeline(&config)?;
+    let factory = ContactGeneratorFactory::from_config(config.clone());
+    let metrics = run_pipeline(&config, &factory)?;
 
     info!(
         "Total generation and write time: {:?}.",

@@ -1,4 +1,4 @@
-use crate::datagen::ContactRecordBatchGenerator;
+use crate::datagen::RecordBatchGeneratorFactory;
 use arrow::datatypes::{Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use human_format::Formatter;
@@ -9,7 +9,7 @@ use rayon::prelude::*;
 use std::error::Error;
 use std::fmt::Debug;
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use std::{fmt, thread};
@@ -40,8 +40,32 @@ impl PipelineConfig {
         self.target_records
     }
 
+    pub fn total_batches(&self) -> usize {
+        self.target_records.div_ceil(self.record_batch_size)
+    }
+
+    pub fn record_batch_size(&self) -> usize {
+        self.record_batch_size
+    }
+
     pub fn num_writers(&self) -> usize {
         self.num_writers
+    }
+
+    pub fn num_producers(&self) -> usize {
+        self.num_producers
+    }
+
+    pub fn output_filename(&self) -> &str {
+        &self.output_filename
+    }
+
+    pub fn output_dir(&self) -> &Path {
+        self.output_dir.as_path()
+    }
+
+    pub fn arrow_schema(&self) -> SchemaRef {
+        self.arrow_schema.clone()
     }
 }
 
@@ -201,19 +225,23 @@ fn create_writer_thread(
 
 pub fn run_pipeline(
     config: &PipelineConfig,
+    factory: &impl RecordBatchGeneratorFactory,
 ) -> Result<PipelineMetrics, Box<dyn Error + Send + Sync>> {
     let start_time = Instant::now();
 
     let mut writers: Vec<_> = Vec::new();
     let mut senders = Vec::new();
 
-    for i in 0..config.num_writers {
-        let (tx, rx) = mpsc::sync_channel(config.num_producers * 2); // double buffer depth
+    for i in 0..config.num_writers() {
+        let (tx, rx) = mpsc::sync_channel(config.num_producers() * 2); // double buffer depth
 
-        let output_filename = format!("{filename}_{i}.parquet", filename = config.output_filename);
-        let output_path = config.output_dir.join(output_filename);
+        let output_filename = format!(
+            "{filename}_{i}.parquet",
+            filename = config.output_filename()
+        );
+        let output_path = config.output_dir().join(output_filename);
 
-        let writer = create_writer_thread(output_path, rx, config.arrow_schema.clone());
+        let writer = create_writer_thread(output_path, rx, config.arrow_schema());
 
         writers.push(writer);
         senders.push(tx);
@@ -226,9 +254,6 @@ pub fn run_pipeline(
 
     let processing_result_from_pool = pool.install(|| {
         let num_batches = config.target_records.div_ceil(config.record_batch_size);
-        let parquet_schema = config.arrow_schema.clone();
-        let phone_number_batch_size =
-            ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND.div_ceil(num_batches);
 
         // We will parallelize the work by giving each producer thread a range of chunks to process.
         let processing_result = (0..num_batches).into_par_iter().try_for_each(
@@ -241,17 +266,14 @@ pub fn run_pipeline(
                     return Ok(());
                 }
 
-                let phone_id_offset = batch_index * phone_number_batch_size;
-                let rb = ContactRecordBatchGenerator::new(parquet_schema.clone()).generate(
-                    batch_index as u64,
-                    current_batch_size,
-                    phone_id_offset,
-                )?;
+                let record_batch = factory
+                    .create_generator(batch_index)
+                    .generate(current_batch_size)?;
 
                 let sender_id = batch_index % config.num_writers;
 
                 senders[sender_id]
-                    .send(rb)
+                    .send(record_batch)
                     .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
 
                 Ok(())
