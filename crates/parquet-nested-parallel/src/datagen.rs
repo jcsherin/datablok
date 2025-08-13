@@ -22,9 +22,10 @@ pub trait RecordBatchGeneratorFactory: Send + Sync {
 
 /// A single instance will generate one `RecordBatch`.
 pub trait RecordBatchGenerator {
-    /// A stateless method which is used for generating a single RecordBatch
-    /// using data skew primitives.
-    fn generate(&self, count: usize) -> Result<RecordBatch, Box<dyn Error + Send + Sync>>;
+    /// A stateful method which is used for generating a single RecordBatch
+    /// using data skew primitives and resets the internal builders for computing
+    /// the next RecordBatch.
+    fn generate(&mut self, count: usize) -> Result<RecordBatch, Box<dyn Error + Send + Sync>>;
 }
 
 pub struct ContactGeneratorFactory {
@@ -71,24 +72,51 @@ impl RecordBatchGeneratorFactory for ContactGeneratorFactory {
 #[derive(Debug)]
 pub struct ContactRecordBatchGenerator {
     schema: SchemaRef,
-    seed: u64,
     phone_id_offset: usize,
+
+    name_builder: StringBuilder,
+    name_buf: String,
+
+    phones_builder: ListBuilder<StructBuilder>,
+    phone_number_buf: String,
+
+    rng: StdRng,
 }
 
 impl ContactRecordBatchGenerator {
     const PHONE_NUMBER_LENGTH: usize = 15; // +91 12345 56789 (15 bytes)
+    const NAME_LENGTH: usize = 32;
     pub const PHONE_NUMBER_UPPER_BOUND: usize = 100_000_000; // for an 8-digit unique suffix
     pub fn new(schema: SchemaRef, seed: u64, phone_id_offset: usize) -> Self {
+        let name_builder = StringBuilder::new();
+        let name_buf = String::with_capacity(Self::NAME_LENGTH);
+
+        let phone_type_builder = StringDictionaryBuilder::<UInt8Type>::new();
+        let phone_number_builder = StringBuilder::new();
+        let phone_builder = StructBuilder::new(
+            get_contact_phone_fields(),
+            vec![Box::new(phone_number_builder), Box::new(phone_type_builder)],
+        );
+        let phones_builder = ListBuilder::new(phone_builder);
+
+        let phone_number_buf = String::with_capacity(Self::PHONE_NUMBER_LENGTH);
+
+        let rng = StdRng::seed_from_u64(seed);
+
         Self {
             schema,
-            seed,
             phone_id_offset,
+            name_builder,
+            name_buf,
+            phones_builder,
+            phone_number_buf,
+            rng,
         }
     }
 }
 
 impl RecordBatchGenerator for ContactRecordBatchGenerator {
-    fn generate(&self, count: usize) -> Result<RecordBatch, Box<dyn Error + Send + Sync>> {
+    fn generate(&mut self, count: usize) -> Result<RecordBatch, Box<dyn Error + Send + Sync>> {
         let mut phone_number_counter = self.phone_id_offset;
 
         // Invariant: upper bound should not exceed 100M (8 digits)
@@ -98,36 +126,34 @@ impl RecordBatchGenerator for ContactRecordBatchGenerator {
             Self::PHONE_NUMBER_UPPER_BOUND
         );
 
-        let mut name = StringBuilder::new();
-        let phone_type = StringDictionaryBuilder::<UInt8Type>::new();
-        let phone_number = StringBuilder::new();
-        let mut phone_number_buf = String::with_capacity(Self::PHONE_NUMBER_LENGTH);
-        let phone = StructBuilder::new(
-            get_contact_phone_fields(),
-            vec![Box::new(phone_number), Box::new(phone_type)],
-        );
-        let mut phones = ListBuilder::new(phone);
-
-        let rng = &mut StdRng::seed_from_u64(self.seed);
-        let mut name_buf = String::with_capacity(32);
+        // let phone_type = StringDictionaryBuilder::<UInt8Type>::new();
+        // let phone_number = StringBuilder::new();
+        // let mut phone_number_buf = String::with_capacity(Self::PHONE_NUMBER_LENGTH);
+        // let phone = StructBuilder::new(
+        //     get_contact_phone_fields(),
+        //     vec![Box::new(phone_number), Box::new(phone_type)],
+        // );
+        // let mut phones = ListBuilder::new(phone);
+        //
+        // let rng = &mut StdRng::seed_from_u64(self.seed);
 
         for _ in 0..count {
-            if generate_name(rng, &mut name_buf) {
-                name.append_value(&name_buf);
+            if generate_name(&mut self.rng, &mut self.name_buf) {
+                self.name_builder.append_value(&self.name_buf);
             } else {
-                name.append_null();
+                self.name_builder.append_null();
             }
 
-            let phones_count = generate_phones_count(rng);
+            let phones_count = generate_phones_count(&mut self.rng);
             if phones_count == 0 {
-                phones.append_null();
+                self.phones_builder.append_null();
             } else {
-                let builder = phones.values();
+                let builder = self.phones_builder.values();
 
                 for _ in 0..phones_count {
                     builder.append(true);
 
-                    let (has_number, phone_type) = generate_phone_template(rng);
+                    let (has_number, phone_type) = generate_phone_template(&mut self.rng);
 
                     let phone_number_builder = builder
                         .field_builder::<StringBuilder>(PHONE_NUMBER_FIELD_INDEX)
@@ -149,12 +175,12 @@ impl RecordBatchGenerator for ContactRecordBatchGenerator {
                             "Phone number ID exceeded global limit"
                         );
 
-                        write!(phone_number_buf, "+91-99-{phone_number_counter:08}").unwrap();
+                        write!(self.phone_number_buf, "+91-99-{phone_number_counter:08}").unwrap();
                         phone_number_counter += 1;
 
-                        phone_number_builder.append_value(&phone_number_buf);
+                        phone_number_builder.append_value(&self.phone_number_buf);
 
-                        phone_number_buf.clear();
+                        self.phone_number_buf.clear();
                     } else {
                         phone_number_builder.append_option(None::<String>);
                     }
@@ -165,13 +191,16 @@ impl RecordBatchGenerator for ContactRecordBatchGenerator {
                         .append_option(phone_type);
                 }
 
-                phones.append(true);
+                self.phones_builder.append(true);
             }
         }
 
+        let name_array = self.name_builder.finish();
+        let phones_array = self.phones_builder.finish();
+
         let rb = RecordBatch::try_new(
             self.schema.clone(),
-            vec![Arc::new(name.finish()), Arc::new(phones.finish())],
+            vec![Arc::new(name_array), Arc::new(phones_array)],
         )?;
 
         Ok(rb)
