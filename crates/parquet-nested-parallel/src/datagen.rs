@@ -112,7 +112,11 @@ impl RecordBatchGenerator for ContactRecordBatchGenerator {
         let mut name_buf = String::with_capacity(32);
 
         for _ in 0..count {
-            name.append_option(generate_name(rng, &mut name_buf));
+            if generate_name(rng, &mut name_buf) {
+                name.append_value(&name_buf);
+            } else {
+                name.append_null();
+            }
 
             let phones_count = generate_phones_count(rng);
             if phones_count == 0 {

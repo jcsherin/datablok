@@ -101,7 +101,9 @@ pub fn generate_phone_template(rng: &mut impl Rng) -> (bool, Option<PhoneType>) 
 /// This function takes a mutable buffer `name_buf` to avoid repeated memory allocations
 /// when generating many names in a loop. The buffer is cleared after each name is
 /// generated.
-pub fn generate_name(rng: &mut impl Rng, name_buf: &mut String) -> Option<String> {
+pub fn generate_name(rng: &mut impl Rng, name_buf: &mut String) -> bool {
+    name_buf.clear();
+
     if rng.random_bool(0.8) {
         write!(
             name_buf,
@@ -111,12 +113,9 @@ pub fn generate_name(rng: &mut impl Rng, name_buf: &mut String) -> Option<String
         )
         .unwrap();
 
-        let name = Some(name_buf.clone());
-        name_buf.clear();
-
-        name
+        true
     } else {
-        None
+        false
     }
 }
 
@@ -293,26 +292,20 @@ mod tests {
         let mut name_buf = String::new();
         let mut counts = HashMap::new();
         let num_iterations = 100000;
-        let mut name_validated = false;
 
         for _ in 0..num_iterations {
-            let name = generate_name(&mut rng, &mut name_buf);
-            if let Some(n) = &name {
-                // As a one-time check, validate the contents of the first name generated.
-                if !name_validated {
-                    assert!(!n.is_empty());
-                    assert!(n.contains(" "));
-                    name_validated = true;
-                }
+            if generate_name(&mut rng, &mut name_buf) {
+                assert!(!name_buf.is_empty());
+                assert!(name_buf.contains(" "));
+                *counts.entry(true).or_insert(0) += 1;
+            } else {
+                *counts.entry(false).or_insert(0) += 1;
             }
-            *counts.entry(name.is_some()).or_insert(0) += 1;
         }
 
-        // Ensure that at least one name was generated and validated during the test.
         assert!(
-            name_validated,
-            "Failed to generate a single valid name in {} iterations.",
-            num_iterations
+            counts.get(&true).unwrap_or(&0) > &0,
+            "Failed to generate a single valid name in {num_iterations} iterations."
         );
 
         const NAME_WEIGHTS: [u32; 2] = [80, 20]; // Some, None
