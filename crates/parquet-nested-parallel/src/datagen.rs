@@ -18,17 +18,21 @@ use std::sync::Arc;
 /// An iterator that generates a sequence of unique phone number IDs for a batch.
 #[derive(Debug)]
 pub struct PhoneNumberIdIterator {
-    next_id: u64,
-    end_id: u64, // The exclusive upper bound for this batch's range.
+    range: std::ops::Range<u64>,
 }
 
 impl PhoneNumberIdIterator {
     /// Creates a new iterator for a given range of phone number IDs.
-    pub fn new(start_id: u64, end_id: u64) -> Self {
-        Self {
-            next_id: start_id,
-            end_id,
-        }
+    pub fn new(range: std::ops::Range<u64>) -> Self {
+        Self { range }
+    }
+
+    pub fn start_id(&self) -> u64 {
+        self.range.start
+    }
+
+    pub fn end_id(&self) -> u64 {
+        self.range.end
     }
 }
 
@@ -36,13 +40,7 @@ impl Iterator for PhoneNumberIdIterator {
     type Item = u64;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.next_id < self.end_id {
-            let id = self.next_id;
-            self.next_id += 1;
-            Some(id)
-        } else {
-            None // Range exhausted
-        }
+        self.range.next()
     }
 }
 
@@ -88,7 +86,7 @@ impl RecordBatchGeneratorFactory for ContactGeneratorFactory {
     fn create_generator(&self, batch_index: usize) -> Self::Generator {
         let start_id = (batch_index * self.records_per_batch * MAX_PHONES_PER_CONTACT) as u64;
         let end_id = ((batch_index + 1) * self.records_per_batch * MAX_PHONES_PER_CONTACT) as u64;
-        let phone_number_iter = PhoneNumberIdIterator::new(start_id, end_id);
+        let phone_number_iter = PhoneNumberIdIterator::new(start_id..end_id);
 
         ContactRecordBatchGenerator::new(self.schema.clone(), batch_index as u64, phone_number_iter)
     }
@@ -416,17 +414,19 @@ mod tests {
             let expected_end = expected_start + range_size;
 
             assert_eq!(
-                gen.phone_number_iter.next_id, expected_start,
+                gen.phone_number_iter.start_id(),
+                expected_start,
                 "Incorrect start offset for batch {}",
                 batch_index
             );
             assert_eq!(
-                gen.phone_number_iter.end_id, expected_end,
+                gen.phone_number_iter.end_id(),
+                expected_end,
                 "Incorrect end offset for batch {}",
                 batch_index
             );
             assert_eq!(
-                gen.phone_number_iter.end_id - gen.phone_number_iter.next_id,
+                gen.phone_number_iter.end_id() - gen.phone_number_iter.start_id(),
                 range_size,
                 "Incorrect range size for batch {}",
                 batch_index
