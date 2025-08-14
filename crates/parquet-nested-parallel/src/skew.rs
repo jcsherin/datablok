@@ -46,6 +46,10 @@ const PHONES_COUNT_WEIGHTS: [u32; 4] = [40, 45, 10, 5];
 /// The range for the rare case where a contact has a high number of phones.
 const HIGH_PHONE_COUNT_RANGE: std::ops::RangeInclusive<i32> = 3..=5;
 
+/// The maximum number of phones a contact can have, used by data generators
+/// to calculate the upper bound of phone numbers needed for a batch.
+pub const MAX_PHONES_PER_CONTACT: usize = *HIGH_PHONE_COUNT_RANGE.end() as usize;
+
 /// Generates a skewed number of phones (from 0 to 5) based on the `PHONES_COUNT_WEIGHTS` distribution.
 pub fn generate_phones_count(rng: &mut impl Rng) -> i32 {
     let dist = WeightedIndex::new(PHONES_COUNT_WEIGHTS).unwrap();

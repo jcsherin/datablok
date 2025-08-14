@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     info!("Config: {config:?}");
 
-    let factory = ContactGeneratorFactory::from_config(config.clone());
+    let factory = ContactGeneratorFactory::from_config(&config);
     let metrics = run_pipeline(&config, &factory)?;
 
     info!(

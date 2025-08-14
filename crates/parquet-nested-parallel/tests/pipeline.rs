@@ -16,7 +16,7 @@ static INIT: Lazy<()> = Lazy::new(|| {
 });
 
 fn assert_pipeline_properties(temp_dir: &TempDir, config: &PipelineConfig) {
-    let factory = ContactGeneratorFactory::from_config(config.clone());
+    let factory = ContactGeneratorFactory::from_config(config);
     let _ = run_pipeline(&config, &factory).expect("Pipeline failed to run");
 
     // Verify the output is correct.
@@ -164,10 +164,9 @@ fn test_config_error_with_zero_producers() {
                 "Error message did not match expected."
             );
         }
-        Err(PipelineConfigError::MissingSchema) => {
-            panic!("Expected ZeroProducers error, but got MissingSchema error.")
+        other => {
+            panic!("Expected PipelineConfig::ZeroProducers, but found {other:?}");
         }
-        Ok(_) => panic!("Expected ZeroProducers error, but got Ok result."),
     }
 }
 
@@ -187,10 +186,8 @@ fn test_config_error_missing_schema() {
                 "Error message did not match expected."
             );
         }
-        Err(e) => panic!(
-            "Expected MissingSchema error, but got a different error: {:?}",
-            e
-        ),
-        Ok(_) => panic!("Expected MissingSchema error, but got Ok result."),
+        other => {
+            panic!("Expected PipelineConfig::MissingSchema, but found {other:?}");
+        }
     }
 }

@@ -1,5 +1,7 @@
-use crate::datagen::RecordBatchGenerator;
-use crate::datagen::RecordBatchGeneratorFactory;
+use crate::datagen::{
+    ContactRecordBatchGenerator, RecordBatchGenerator, RecordBatchGeneratorFactory,
+};
+use crate::skew::MAX_PHONES_PER_CONTACT;
 use arrow::datatypes::{Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use human_format::Formatter;
@@ -91,6 +93,12 @@ pub enum PipelineConfigError {
         num_writers: usize,
     },
     MissingSchema,
+    TargetRecordsTooLarge {
+        target_records: usize,
+        max_records: u64,
+        total_phone_numbers: u64,
+        max_phones_per_record: usize,
+    },
 }
 
 impl fmt::Display for PipelineConfigError {
@@ -109,6 +117,23 @@ impl fmt::Display for PipelineConfigError {
                 write!(
                     f,
                     "The pipeline config is missing an Arrow schema definition.",
+                )
+            }
+            PipelineConfigError::TargetRecordsTooLarge {
+                target_records,
+                max_records,
+                total_phone_numbers,
+                max_phones_per_record,
+            } => {
+                write!(
+                    f,
+                    concat!(
+                        "Configuration error: The requested number of target_records ({}) ",
+                        "is too high. Based on the system's capacity of {} unique ",
+                        "phone numbers and a maximum of {} phones per record, the ",
+                        "limit for target_records is {}. Please adjust the configuration."
+                    ),
+                    target_records, total_phone_numbers, max_phones_per_record, max_records
                 )
             }
         }
@@ -173,6 +198,17 @@ impl PipelineConfigBuilder {
 
         if self.inner.arrow_schema.fields().is_empty() {
             return Err(PipelineConfigError::MissingSchema);
+        }
+
+        let max_possible_phones = self.inner.target_records as u64 * MAX_PHONES_PER_CONTACT as u64;
+        if max_possible_phones >= ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND {
+            return Err(PipelineConfigError::TargetRecordsTooLarge {
+                target_records: self.inner.target_records,
+                max_records: ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND
+                    / MAX_PHONES_PER_CONTACT as u64,
+                total_phone_numbers: ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND,
+                max_phones_per_record: MAX_PHONES_PER_CONTACT,
+            });
         }
 
         Ok(self.inner)
@@ -336,4 +372,43 @@ pub fn run_pipeline(
         elapsed_time,
         records_per_sec,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::datagen::ContactRecordBatchGenerator;
+    use crate::skew::MAX_PHONES_PER_CONTACT;
+
+    #[test]
+    fn test_config_builder_fails_on_too_many_records() {
+        let schema = parquet_nested_common::prelude::get_contact_schema(); // Use a real schema
+
+        // Calculate a number of records that is just over the limit.
+        let max_records =
+            ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND / MAX_PHONES_PER_CONTACT as u64;
+        let invalid_target_records = (max_records + 1) as usize;
+
+        let builder = PipelineConfigBuilder::new()
+            .with_arrow_schema(schema)
+            .with_target_records(invalid_target_records);
+
+        let result = builder.try_build();
+        let error = result.unwrap_err();
+
+        let expected_message = format!(
+            concat!(
+                "Configuration error: The requested number of target_records ({}) ",
+                "is too high. Based on the system's capacity of {} unique ",
+                "phone numbers and a maximum of {} phones per record, the ",
+                "limit for target_records is {}. Please adjust the configuration."
+            ),
+            invalid_target_records,
+            ContactRecordBatchGenerator::PHONE_NUMBER_UPPER_BOUND,
+            MAX_PHONES_PER_CONTACT,
+            max_records
+        );
+
+        assert_eq!(error.to_string(), expected_message);
+    }
 }
