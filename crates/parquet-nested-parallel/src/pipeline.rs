@@ -92,6 +92,7 @@ pub enum PipelineConfigError {
         total_threads: usize,
         num_writers: usize,
     },
+    ZeroWriters,
     MissingSchema,
     TargetRecordsTooLarge {
         target_records: usize,
@@ -112,6 +113,9 @@ impl fmt::Display for PipelineConfigError {
                     f,
                     "No. of producer threads must be greater than zero. Total threads: {total_threads}. Writer threads: {num_writers}.",
                 )
+            }
+            PipelineConfigError::ZeroWriters => {
+                write!(f, "Number of writers must be greater than zero.")
             }
             PipelineConfigError::MissingSchema => {
                 write!(
@@ -185,6 +189,10 @@ impl PipelineConfigBuilder {
     }
 
     pub fn try_build(mut self) -> Result<PipelineConfig, PipelineConfigError> {
+        if self.inner.num_writers == 0 {
+            return Err(PipelineConfigError::ZeroWriters);
+        }
+
         let total_threads = rayon::current_num_threads();
         let num_producers = total_threads.saturating_sub(self.inner.num_writers);
 
@@ -410,5 +418,25 @@ mod tests {
         );
 
         assert_eq!(error.to_string(), expected_message);
+    }
+
+    #[test]
+    fn test_config_builder_fails_on_zero_writers() {
+        let builder = PipelineConfigBuilder::new().with_num_writers(0);
+        let result = builder.try_build();
+        let error = result.unwrap_err();
+
+        let expected_message = "Number of writers must be greater than zero.".to_string();
+
+        assert_eq!(error.to_string(), expected_message);
+
+        if let PipelineConfigError::ZeroWriters = error {
+            // Correct error variant caught
+        } else {
+            panic!(
+                "Expected ZeroWriters error, but got a different error: {:?}",
+                error
+            );
+        }
     }
 }
