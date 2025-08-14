@@ -31,7 +31,7 @@ fn pipeline_throughput_benchmark(c: &mut Criterion) {
                             .with_arrow_schema(get_contact_schema())
                             .try_build()
                             .unwrap();
-                        let factory = ContactGeneratorFactory::from_config(config.clone());
+                        let factory = ContactGeneratorFactory::from_config(&config);
 
                         (factory, config, temp_dir)
                     },
