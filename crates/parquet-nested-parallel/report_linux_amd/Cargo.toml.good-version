@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "crates/*"
+]
+resolver = "2"
+
+[workspace.dependencies]
+
+[profile.release]
+debug = "line-tables-only"
+strip = false # Retain debug info for flamegraphs

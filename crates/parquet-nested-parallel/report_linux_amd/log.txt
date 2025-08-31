@@ -1,0 +1,201 @@
+commit 2f285c1bb475e7b1a734490a65ce0e10958b97d4
+Author: Sherin Jacob <jacob@protoship.io>
+Date:   Thu Aug 14 00:02:34 2025 +0530
+
+    perf(parquet-nested-parallel): reuse string buffer to avoid a heap allocation
+
+
+commit da4a725c28b08d13f2f8ead7ef42e43ecedc7cf0
+Author: Sherin Jacob <jacob@protoship.io>
+Date:   Mon Aug 11 23:31:35 2025 +0530
+
+    perf(parquet-nested-parallel): eliminate atomic contention by using deterministic ID partitioning
+
+
+commit de2c44ac10620e61ed953ae7fc349c013ecbf16f
+Author: jcsherin <jacob@protoship.io>
+Date:   Fri Jul 4 13:03:55 2025 +0530
+
+    docs(parquet): performance comparison of string interning strategies
+
+
+commit 5693fb214b079f3f0ebf8114ddfa49e33082aad1
+Author: jcsherin <jacob@protoship.io>
+Date:   Fri Jul 4 12:16:23 2025 +0530
+
+    Revert "feat(parquet): string interning generated names"
+
+    This reverts commit e895b92e7e43c5bf4f3964d211f94eb08d4b5ad4.
+
+    I am reverting this because it ended up degrading performance
+    significantly.
+    - IPC halved 2.08 to 1.10 instructions per cycle
+    - Cache misses doubled from 11% to 22%
+
+    perf stats summary:
+    33,883,545,682   instructions # 1.10  insn per cycle
+    146,031,921      cache-misse  # 22.49% of all cache refs
+
+    String interning is a good idea because of the many small heap
+    allocations which happens in `generate_name`. The problem is the
+    shared interner data structure between all threads.
+
+    In theory this may have worked. But in practice cache coherency
+    issues from all threads trying to simultaneously read & write to
+    the string interner data structure, blew up performance. The cost
+    of cross-core cache invalidations turned out to be much higher
+    than the savings from original allocation of 8million strings.
+
+    The next step is to try a thread-local to avoid cache coherence
+    problems. The impact is going to be smaller compared because the
+    interner is now local, rather than global. So across threads there
+    are going to be duplicate allocations. But this is worth a shot
+    because I expect it to scale linearly or better for workloads with
+    runs higher than 10M.
+
+
+commit e895b92e7e43c5bf4f3964d211f94eb08d4b5ad4
+Author: jcsherin <jacob@protoship.io>
+Date:   Fri Jul 4 12:03:03 2025 +0530
+
+    feat(parquet): string interning generated names
+
+    Even though 10 million `{first_name} {last_name}` formatted names
+    are being generated using `Fake`, they are not all unique. The
+    names follow a Poisson distribution with many repetitions. In any
+    run there are only likely ~1.2 million unique names.
+
+    We can take advantage of this repetition and use string interning
+    to bring down the string allocations from 8million (80% names are
+    not null) down to ~1.2 million (names which are unique).
+
+
+   commit 7e5c733e27098a5230e703de720869e4810eca10
+Author: jcsherin <jacob@protoship.io>
+Date:   Thu Jul 3 21:44:19 2025 +0530
+
+    perf(parquet): adds `GeneratorState` to thread local state
+
+    The high-level idea is to wait until a minimum chunks of Vec<PartialContact>
+    is appended to RecordBatch builder before finalizing it. The higher
+    row count will improve RecordBatch creation efficiency.
+
+    The entire pipeline is now 1.16x faster (~14% improvement).
+
+
+commit 4c727ff55293f58056237a7bd1ebb3621becdff1
+Author: jcsherin <jacob@protoship.io>
+Date:   Tue Jul 1 21:05:27 2025 +0530
+
+    perf(parquet): Migrate from single writer to 4 writers
+
+    In a single writer the producers were blocking on it to encode the
+    Parquet data. Now with more writers the producers blocks less. This
+    increases the overall throughput.
+
+    The total wall clock time is now under a second ~0.90 from 1.25s.
+
+    The IPC has reduced to 1.78 (~13% less efficient per core), and
+    higher user (cpu) time 4.14s (~21% more).
+
+    This improvement is counter-intuitive. Earlier all the data gen
+    threads were blocking on a single writer doing the work of encoding
+    to Parquet format. Now with more writers, more work is being done
+    and less time is spent blocking.
+
+    Now there are more total threads than physical cores (over-
+    subscription). There is going to more contention, and context
+    switches happening more often. So overally individual threads are
+    less efficient, lowering the average IPC.
+
+    But we are now using the hardware more effectively as the total
+    run time has decreased significantly. We traded a little thread
+    inefficiency for an increase in program throughput.
+
+
+commit 5244ac2df729ce9a14f11f1d0130717cb4d6234f
+Author: jcsherin <jacob@protoship.io>
+Date:   Tue Jul 1 16:44:37 2025 +0530
+
+    perf(parquet): replaces `proptest` with lightweight functions
+
+    Replaces entire `proptest` with a custom functions which uses `rand`
+    for probability distributions of data. This is extremely lightweight
+    and lightning quick!
+
+    This is a major performance improvement for a 10 million run.
+    - wall clock time reduced to 1.15s
+    - user (cpu) time reduced to 3.46s
+    - cpu cycles reduced to 18.7 billion
+    - cpu instructions reduced to 38.5 billion
+    - instructions per cycle now 2.06
+    - significantly fewer cache misses at 76 million
+    - significantly fewer branch mispredictions at 192 million
+
+
+commit c6aa5d1a28c3a4939448056048c4686372ff0f79
+Author: jcsherin <jacob@protoship.io>
+Date:   Tue Jul 1 15:50:11 2025 +0530
+
+    perf(parquet): Uses two writers instead of one
+
+    The Parquet encoding is a bottleneck because there are many data
+    generator threads but only a single writer. The generators produce
+    as fast as possible but is blocked by the writer encoding to Parquet
+    format.
+
+    This is a CPU bound workload and not disk I/O bound. For 10M the
+    created parquet file has a total size of under 400MB. The work stalls
+    when data generator threads are blocking on the single writer thread.
+
+    This is also a proof-of-concept to show the performance impact of
+    spreading write across two writers.
+
+    - Wall clock time reduced by 23%: 3.85s -> 2.89s
+    - CPU utliziation increased (less blocking)
+
+
+commit 3abe3e6b4d8f50f619c8cd4a742957862be9f933
+Author: jcsherin <jacob@protoship.io>
+Date:   Tue Jul 1 14:56:39 2025 +0530
+
+    perf(parquet): Shave additional 2s off in name strategy
+
+    - ~4% faster execution:    4.03s -> 3.86s
+    - ~6% less cpu cycles:     121 billion -> 114 billion
+    - ~3% fewer instructions:  141 billion -> 137 billion
+    - ~5% fewer cache misses:  1 billion -> 976 million
+    ~ ~7% less cpu time:       26.54 -> 24.65s
+
+commit 94a0d927d8f5baf52efc0d5565355020f6e6a638
+Author: jcsherin <jacob@protoship.io>
+Date:   Tue Jul 1 14:37:43 2025 +0530
+
+    perf(parquet): replace `format!` with pre-allocated `write!` buffer
+
+    Fewer cpu cycles, instructions and branch instructions.
+
+commit cfb792f54be2541647fb1dd4a00380d978171f81
+Author: jcsherin <jacob@protoship.io>
+Date:   Tue Jul 1 10:56:41 2025 +0530
+
+    perf(parquet): directly converts PartialContact to RecordBatch
+
+    Refactors the data generation pipeline to remove the intermediate
+    materialization of `Vec<Contact>`. Now chunks of `PartialContact`
+    are directly converted to `RecordBatch`, improving CPU efficiency.
+
+    While wall-clock time shows only a modest improvement in time, the
+    hardware performance counters confirms improvements at the
+    microarchitectural level:
+
+    - IPC improved from 1.20 to 1.21
+    - CPU cycles reduced by ~420 million for a 10M run
+    - Branch misses decreased by 1.2%
+
+commit 836d17f1b217d21e1e9ca46d7a735004c1f57d5d
+Author: jcsherin <jacob@protoship.io>
+Date:   Tue Jul 1 09:53:45 2025 +0530
+
+    perf(parquet): use `StringDictionaryBuilder` for 15% improvements
+

@@ -1,0 +1,18 @@
+# started on Sun Aug 31 12:17:10 2025
+
+
+ Performance counter stats for 'target/release/parquet-parallel-nested':
+
+    13,903,917,896      cycles                                                                  (83.56%)
+    29,280,169,142      instructions                     #    2.11  insn per cycle              (83.02%)
+       335,494,489      cache-references                                                        (83.25%)
+        39,481,500      cache-misses                     #   11.77% of all cache refs           (83.23%)
+     5,441,101,377      branch-instructions                                                     (83.54%)
+       127,077,175      branch-misses                    #    2.34% of all branches             (83.47%)
+
+       0.533859148 seconds time elapsed
+
+       2.890984000 seconds user
+       0.413990000 seconds sys
+
+
