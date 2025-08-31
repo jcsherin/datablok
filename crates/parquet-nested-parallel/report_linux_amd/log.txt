@@ -12,13 +12,6 @@ Date:   Mon Aug 11 23:31:35 2025 +0530
     perf(parquet-nested-parallel): eliminate atomic contention by using deterministic ID partitioning
 
 
-commit de2c44ac10620e61ed953ae7fc349c013ecbf16f
-Author: jcsherin <jacob@protoship.io>
-Date:   Fri Jul 4 13:03:55 2025 +0530
-
-    docs(parquet): performance comparison of string interning strategies
-
-
 commit 5693fb214b079f3f0ebf8114ddfa49e33082aad1
 Author: jcsherin <jacob@protoship.io>
 Date:   Fri Jul 4 12:16:23 2025 +0530
