@@ -85,7 +85,7 @@ grep "^commit " "$LOG_FILE" | awk '{print $2}' | tac | while IFS= read -r commit
     echo "⏱️ Running hyperfine benchmark (will require sudo)..."
     sudo /home/jcsherin/.cargo/bin/hyperfine --warmup 1 --runs 10 \
       --prepare 'sync; echo 3 > /proc/sys/vm/drop_caches' \
-      --export-markdown "$COMMIT_OUTPUT_DIR/hyperfine_summary.md" \
+      --export-json "$COMMIT_OUTPUT_DIR/hyperfine_results.json" \
       "$BINARY_PATH" &> /dev/null
 
     echo "📊 Running perf stat (will require sudo)..."
