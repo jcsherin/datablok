@@ -7,8 +7,7 @@
 set -e
 
 # --- Configuration ---
-LOG_FILE="log.txt"
-GOOD_CARGO_TOML="Cargo.toml.good-version"
+LOG_FILE="crates/parquet-nested-parallel/report_linux_amd/log.txt"
 OUTPUT_DIR="performance_results"
 POSSIBLE_PACKAGES=("parquet-nested-parallel" "parquet-parallel-nested")
 FLAMEGRAPH_DIR="${HOME}/FlameGraph"
@@ -18,10 +17,6 @@ PERF_STAT_EVENTS="cycles,instructions,cache-references,cache-misses,branch-instr
 # --- Sanity Checks ---
 if [ ! -f "$LOG_FILE" ]; then
     echo "ERROR: Input file '$LOG_FILE' not found." >&2
-    exit 1
-fi
-if [ ! -f "$GOOD_CARGO_TOML" ]; then
-    echo "ERROR: The template file '$GOOD_CARGO_TOML' is missing." >&2
     exit 1
 fi
 
@@ -68,8 +63,8 @@ grep "^commit " "$LOG_FILE" | awk '{print $2}' | tac | while IFS= read -r commit
 
     package_name="$found_package"
 
-    echo "🔧 Resetting Cargo.toml to known-good version..."
-    cp "$GOOD_CARGO_TOML" Cargo.toml
+    echo "🔧 Resetting Cargo.toml to version from '$ORIGINAL_BRANCH' branch..."
+    git show "$ORIGINAL_BRANCH":Cargo.toml > Cargo.toml
 
     echo "🏗️ Building package '$package_name'..."
     cargo build --release -p "$package_name"
