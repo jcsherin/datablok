@@ -199,3 +199,8 @@ Date:   Tue Jul 1 09:53:45 2025 +0530
 
     perf(parquet): use `StringDictionaryBuilder` for 15% improvements
 
+commit e702a65e20fa306eb6ad48f0f9d22ecdc558d691
+Author: jcsherin <jacob@protoship.io>
+Date:   Mon Jun 30 22:24:46 2025 +0530
+
+    fix(workspace): Move release profile to workspace root
