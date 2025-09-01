@@ -1,0 +1,271 @@
+~/Projects/rusty-doodles main* ❯ ./scripts/generate_criterion_comparison.sh                                                                                                       03:24:33 PM
+Cleaning old benchmark data from target/criterion...
+
+====================================================================
+Checking out baseline commit (6140f49535411973e10d9e0de6f8af87b6af032e) and running benchmarks...
+====================================================================
+
+Note: switching to '6140f49535411973e10d9e0de6f8af87b6af032e'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+HEAD is now at 6140f49 feat(parquet-nested-parallel): Add end-end pipeline throughput benchmark
+--- Running datagen benchmark ---
+   Compiling parquet-nested-common v0.1.0 (/Users/jcsherin/Projects/rusty-doodles/crates/parquet-nested-common)
+   Compiling parquet-nested-parallel v0.1.0 (/Users/jcsherin/Projects/rusty-doodles/crates/parquet-nested-parallel)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 1.97s
+     Running benches/datagen.rs (target/release/deps/datagen-f3b17af62d44eb69)
+Gnuplot not found, using plotters backend
+skew primitives generator/generate names
+                        time:   [44.400 ns 44.446 ns 44.499 ns]
+Found 24 outliers among 100 measurements (24.00%)
+  19 (19.00%) low severe
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+skew primitives generator/generate phones struct template
+                        time:   [36.305 ns 36.313 ns 36.320 ns]
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) high mild
+  3 (3.00%) high severe
+
+ContactRecordBatchGenerator/generate 1024 records
+                        time:   [159.12 µs 159.19 µs 159.27 µs]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+ContactRecordBatchGenerator/generate 2048 records
+                        time:   [318.52 µs 318.63 µs 318.76 µs]
+Found 11 outliers among 100 measurements (11.00%)
+  6 (6.00%) high mild
+  5 (5.00%) high severe
+ContactRecordBatchGenerator/generate 4096 records
+                        time:   [640.65 µs 640.91 µs 641.24 µs]
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+ContactRecordBatchGenerator/generate 8192 records
+                        time:   [1.2787 ms 1.2796 ms 1.2806 ms]
+Found 6 outliers among 100 measurements (6.00%)
+  4 (4.00%) high mild
+  2 (2.00%) high severe
+
+--- Running pipeline benchmark ---
+   Compiling parquet-nested-parallel v0.1.0 (/Users/jcsherin/Projects/rusty-doodles/crates/parquet-nested-parallel)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.83s
+     Running benches/pipeline.rs (target/release/deps/pipeline-8fe56ca7d26938bf)
+Gnuplot not found, using plotters backend
+pipeline_throughput_benchmark/100000 contacts, 4 parquet writer threads, 8 data generator threads
+                        time:   [8.8882 ms 8.9216 ms 8.9545 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+pipeline_throughput_benchmark/1000000 contacts, 4 parquet writer threads, 8 data generator threads
+                        time:   [67.814 ms 68.120 ms 68.478 ms]
+Found 9 outliers among 100 measurements (9.00%)
+  2 (2.00%) low mild
+  1 (1.00%) high mild
+  6 (6.00%) high severe
+Benchmarking pipeline_throughput_benchmark/10000000 contacts, 4 parquet writer threads, 8 data generator threads: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 60.0s. You may wish to increase target time to 60.8s, or reduce sample count to 90.
+pipeline_throughput_benchmark/10000000 contacts, 4 parquet writer threads, 8 data generator threads
+                        time:   [605.85 ms 607.56 ms 609.51 ms]
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+
+Baseline run complete.
+
+====================================================================
+Checking out perf 11 commit (da4a725c28b08d13f2f8ead7ef42e43ecedc7cf0) and comparing to baseline...
+====================================================================
+
+Previous HEAD position was 6140f49 feat(parquet-nested-parallel): Add end-end pipeline throughput benchmark
+HEAD is now at da4a725 perf(parquet-nested-parallel): eliminate atomic contention by using deterministic ID partitioning
+--- Running datagen benchmark ---
+   Compiling parquet-nested-parallel v0.1.0 (/Users/jcsherin/Projects/rusty-doodles/crates/parquet-nested-parallel)
+warning: variable does not need to be mutable
+  --> crates/parquet-nested-parallel/benches/datagen.rs:40:17
+   |
+40 |             let mut generator = ContactRecordBatchGenerator::new(schema.clone());
+   |                 ----^^^^^^^^^
+   |                 |
+   |                 help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` on by default
+
+warning: `parquet-nested-parallel` (bench "datagen") generated 1 warning (run `cargo fix --bench "datagen"` to apply 1 suggestion)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 1.92s
+     Running benches/datagen.rs (target/release/deps/datagen-f3b17af62d44eb69)
+Gnuplot not found, using plotters backend
+skew primitives generator/generate names
+                        time:   [43.884 ns 43.911 ns 43.948 ns]
+                        change: [-1.5666% -1.4459% -1.3306%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+skew primitives generator/generate phones struct template
+                        time:   [35.436 ns 35.490 ns 35.551 ns]
+                        change: [-2.2335% -2.1290% -2.0262%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 16 outliers among 100 measurements (16.00%)
+  11 (11.00%) low severe
+  1 (1.00%) high mild
+  4 (4.00%) high severe
+
+ContactRecordBatchGenerator/generate 1024 records
+                        time:   [161.42 µs 161.53 µs 161.65 µs]
+                        change: [+1.0735% +1.1970% +1.3110%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+ContactRecordBatchGenerator/generate 2048 records
+                        time:   [322.08 µs 322.18 µs 322.32 µs]
+                        change: [+0.7015% +0.8479% +0.9815%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  6 (6.00%) high severe
+ContactRecordBatchGenerator/generate 4096 records
+                        time:   [651.61 µs 651.97 µs 652.45 µs]
+                        change: [+1.1556% +1.2934% +1.4205%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high severe
+ContactRecordBatchGenerator/generate 8192 records
+                        time:   [1.2914 ms 1.2918 ms 1.2923 ms]
+                        change: [+0.5026% +0.6516% +0.7938%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) low mild
+  2 (2.00%) high mild
+  4 (4.00%) high severe
+
+--- Running pipeline benchmark ---
+   Compiling parquet-nested-parallel v0.1.0 (/Users/jcsherin/Projects/rusty-doodles/crates/parquet-nested-parallel)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.82s
+     Running benches/pipeline.rs (target/release/deps/pipeline-8fe56ca7d26938bf)
+Gnuplot not found, using plotters backend
+pipeline_throughput_benchmark/100000 contacts, 4 parquet writer threads, 8 data generator threads
+                        time:   [7.6959 ms 7.8031 ms 7.9522 ms]
+                        change: [-13.237% -12.457% -11.471%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  2 (2.00%) low mild
+  2 (2.00%) high mild
+  5 (5.00%) high severe
+pipeline_throughput_benchmark/1000000 contacts, 4 parquet writer threads, 8 data generator threads
+                        time:   [56.031 ms 56.161 ms 56.295 ms]
+                        change: [-18.038% -17.557% -17.137%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+pipeline_throughput_benchmark/10000000 contacts, 4 parquet writer threads, 8 data generator threads
+                        time:   [491.35 ms 492.74 ms 494.12 ms]
+                        change: [-19.242% -18.899% -18.550%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+Perf 11 comparison complete.
+
+====================================================================
+Checking out perf 12 commit (2f285c1bb475e7b1a734490a65ce0e10958b97d4) and comparing to perf 11...
+====================================================================
+
+Previous HEAD position was da4a725 perf(parquet-nested-parallel): eliminate atomic contention by using deterministic ID partitioning
+HEAD is now at 2f285c1 perf(parquet-nested-parallel): reuse string buffer to avoid a heap allocation
+--- Running datagen benchmark ---
+   Compiling parquet-nested-common v0.1.0 (/Users/jcsherin/Projects/rusty-doodles/crates/parquet-nested-common)
+   Compiling parquet-nested-parallel v0.1.0 (/Users/jcsherin/Projects/rusty-doodles/crates/parquet-nested-parallel)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 2.07s
+     Running benches/datagen.rs (target/release/deps/datagen-381c868a0feaefb0)
+Gnuplot not found, using plotters backend
+skew primitives generator/generate names
+                        time:   [31.382 ns 31.397 ns 31.414 ns]
+                        change: [-28.592% -28.532% -28.468%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  5 (5.00%) high mild
+  3 (3.00%) high severe
+skew primitives generator/generate phones struct template
+                        time:   [35.602 ns 35.655 ns 35.703 ns]
+                        change: [+0.2467% +0.3694% +0.4935%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 12 outliers among 100 measurements (12.00%)
+  4 (4.00%) low severe
+  2 (2.00%) high mild
+  6 (6.00%) high severe
+
+ContactRecordBatchGenerator/generate 1024 records
+                        time:   [136.47 µs 136.52 µs 136.57 µs]
+                        change: [-15.476% -15.399% -15.322%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high severe
+ContactRecordBatchGenerator/generate 2048 records
+                        time:   [273.61 µs 273.66 µs 273.70 µs]
+                        change: [-15.147% -15.072% -15.000%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+  7 (7.00%) high severe
+ContactRecordBatchGenerator/generate 4096 records
+                        time:   [562.21 µs 562.45 µs 562.66 µs]
+                        change: [-14.089% -13.973% -13.847%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+ContactRecordBatchGenerator/generate 8192 records
+                        time:   [1.1283 ms 1.1285 ms 1.1287 ms]
+                        change: [-12.673% -12.616% -12.553%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+
+--- Running pipeline benchmark ---
+   Compiling parquet-nested-parallel v0.1.0 (/Users/jcsherin/Projects/rusty-doodles/crates/parquet-nested-parallel)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.94s
+     Running benches/pipeline.rs (target/release/deps/pipeline-bf5e0202b94adcb9)
+Gnuplot not found, using plotters backend
+pipeline_throughput_benchmark/100000 records, 4 parquet writer threads, 8 data generator threads
+                        time:   [7.3660 ms 7.3768 ms 7.3878 ms]
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+pipeline_throughput_benchmark/1000000 records, 4 parquet writer threads, 8 data generator threads
+                        time:   [53.560 ms 53.751 ms 53.945 ms]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+pipeline_throughput_benchmark/10000000 records, 4 parquet writer threads, 8 data generator threads
+                        time:   [469.17 ms 470.36 ms 471.63 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+Perf 12 comparison complete.
+
+====================================================================
+Returning to original branch: main
+====================================================================
+
+Previous HEAD position was 2f285c1 perf(parquet-nested-parallel): reuse string buffer to avoid a heap allocation
+Switched to branch 'main'
+Your branch is up to date with 'origin/main'.
+Script finished.
