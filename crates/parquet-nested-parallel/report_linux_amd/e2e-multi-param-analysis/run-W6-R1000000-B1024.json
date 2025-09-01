@@ -1,0 +1,43 @@
+{
+  "results": [
+    {
+      "command": "./target/release/parquet-nested-parallel --num-writers 6 --target-records 1000000 --record-batch-size 1024",
+      "mean": 0.07127420615999999,
+      "stddev": 0.0009385989907163413,
+      "median": 0.07145371536,
+      "user": 0.50188498,
+      "system": 0.09594386,
+      "min": 0.06966941936,
+      "max": 0.07239038436,
+      "times": [
+        0.07239038436,
+        0.07190530036,
+        0.07194624936,
+        0.07010686336,
+        0.07150962436,
+        0.06966941936,
+        0.07105181136,
+        0.07044651836,
+        0.07231808435999999,
+        0.07139780636
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "custom_metrics": {
+        "total_time_ms": 69.139276,
+        "record_throughput_m_sec": 14.0,
+        "mem_throughput_gb_sec": 0.8
+      }
+    }
+  ]
+}
