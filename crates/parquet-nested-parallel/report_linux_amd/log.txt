@@ -62,8 +62,7 @@ Date:   Fri Jul 4 12:03:03 2025 +0530
     to bring down the string allocations from 8million (80% names are
     not null) down to ~1.2 million (names which are unique).
 
-
-   commit 7e5c733e27098a5230e703de720869e4810eca10
+commit 7e5c733e27098a5230e703de720869e4810eca10
 Author: jcsherin <jacob@protoship.io>
 Date:   Thu Jul 3 21:44:19 2025 +0530
 
