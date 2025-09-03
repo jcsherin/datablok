@@ -11,7 +11,7 @@ def get_perf_data():
     Finds and reads all perf_stat.txt files, returning the parsed data.
     """
     try:
-        fd_output = subprocess.check_output(['fd', 'perf_stat.txt'], text=True)
+        fd_output = subprocess.check_output(['fd', 'perf_stat.txt', 'performance_results/'], text=True)
         files = sorted(fd_output.strip().split('\n'))
     except (subprocess.CalledProcessError, FileNotFoundError):
         print("Error: Could not execute 'fd'. Please ensure 'fd' is installed and in your PATH.")
@@ -95,42 +95,36 @@ def create_perf_stat_plots(all_perf_stats, labels):
     metrics_to_plot = [m for m in all_perf_stats[0].keys() if m != 'insn_per_cycle']
     
     # Filter out None values and transpose data for plotting
-    plot_data = {metric: [s[metric] for s in all_perf_stats if s[metric] is not None] for metric in metrics_to_plot}
+    plot_data = {metric: [s[metric] for s in all_perf_stats if s.get(metric) is not None] for metric in metrics_to_plot}
     
-    # Determine grid size (e.g., 3x3 for 9 metrics, 3x2 for 6, etc.)
+    # Determine grid size
     num_metrics = len(metrics_to_plot)
     nrows = int(np.ceil(num_metrics / 3))
     ncols = 3
     
     fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15, nrows * 5), sharex=False)
-    fig.suptitle('Performance Counter Trends Across Runs', fontsize=16)
 
-    # Flatten axes array for easy iteration if nrows > 1
-    if nrows > 1:
+    if nrows > 1 or ncols > 1:
         axes = axes.flatten()
-    else: # Handle case where nrows is 1 (e.g., 1x3 grid)
-        axes = [axes] if ncols > 1 else [axes] # Ensure axes is iterable
+    else:
+        axes = [axes]
 
-    # Tufte-inspired styling for lines
     line_props = {'marker':'o', 'color':'black'}
 
     for i, metric in enumerate(metrics_to_plot):
         ax = axes[i]
         
-        # Ensure there's data for this metric
+        valid_labels = [labels[j] for j, s in enumerate(all_perf_stats) if s.get(metric) is not None]
+
         if plot_data[metric]:
-            ax.plot(labels[:len(plot_data[metric])], plot_data[metric], **line_props)
+            ax.plot(valid_labels, plot_data[metric], **line_props)
         
-        ax.set_title(metric.replace('_', ' ').title()) # Title from metric name
+        ax.set_title(metric.replace('_', ' ').title())
         ax.set_xlabel('Run Number')
         
-        
-        # Tufte: Remove top and right spines
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-        # No grid lines
 
-    # Remove empty subplots
     for i in range(num_metrics, nrows * ncols):
         fig.delaxes(axes[i])
 
@@ -140,18 +134,18 @@ def create_perf_stat_plots(all_perf_stats, labels):
 
 def create_ipc_trend_plot(all_perf_stats, labels):
     """Generates a line plot for IPC trend."""
-    ipc_values = [s['insn_per_cycle'] for s in all_perf_stats if s['insn_per_cycle'] is not None]
-    
+    ipc_values = [s['insn_per_cycle'] for s in all_perf_stats if s.get('insn_per_cycle') is not None]
+    valid_labels = [labels[i] for i, s in enumerate(all_perf_stats) if s.get('insn_per_cycle') is not None]
+
     plt.figure(figsize=(10, 6))
     ax = plt.gca()
 
-    plt.plot(labels[:len(ipc_values)], ipc_values, marker='o', color='black')
+    plt.plot(valid_labels, ipc_values, marker='o', color='black')
     
-    plt.title('Instructions Per Cycle (IPC) Trend', fontsize=16)
+#     plt.title('Instructions Per Cycle (IPC) Trend', fontsize=16)
     plt.xlabel('Run Number')
     plt.ylabel('IPC')
     
-    # Tufte-style axis cleanup
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     
@@ -159,9 +153,100 @@ def create_ipc_trend_plot(all_perf_stats, labels):
     plt.savefig("ipc_trend_plot.png")
     print("Generated ipc_trend_plot.png")
 
+def create_phased_perf_plots(perf_stats_batch, labels_batch, filename):
+    """Generates a grid of line plots for a phase of perf stats."""
+    
+    metrics_to_plot = [m for m in perf_stats_batch[0].keys() if m != 'insn_per_cycle']
+    plot_data = {metric: [s[metric] for s in perf_stats_batch if s.get(metric) is not None] for metric in metrics_to_plot}
+    
+    num_metrics = len(metrics_to_plot)
+    nrows = int(np.ceil(num_metrics / 3))
+    ncols = 3
+    
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15, nrows * 5), sharex=False)
+    
+    if nrows > 1 or ncols > 1:
+        axes = axes.flatten()
+    else:
+        axes = [axes]
+
+    line_props = {'marker':'o', 'color':'black'}
+
+    for i, metric in enumerate(metrics_to_plot):
+        ax = axes[i]
+        
+        valid_labels = [labels_batch[j] for j, s in enumerate(perf_stats_batch) if s.get(metric) is not None]
+
+        if plot_data[metric]:
+            ax.plot(valid_labels, plot_data[metric], **line_props)
+        
+        ax.set_title(metric.replace('_', ' ').title())
+        ax.set_xlabel('Run Number')
+        
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+    for i in range(num_metrics, nrows * ncols):
+        fig.delaxes(axes[i])
+
+    plt.tight_layout(h_pad=3.0)
+    plt.savefig(filename)
+    print(f"Generated {filename}")
+
+def create_phased_ipc_trend_plot(perf_stats_batch, labels_batch, filename):
+    """Generates a line plot for IPC trend for a phase."""
+    ipc_values = [s['insn_per_cycle'] for s in perf_stats_batch if s.get('insn_per_cycle') is not None]
+    valid_labels = [labels_batch[i] for i, s in enumerate(perf_stats_batch) if s.get('insn_per_cycle') is not None]
+    
+    plt.figure(figsize=(10, 6))
+    ax = plt.gca()
+
+    plt.plot(valid_labels, ipc_values, marker='o', color='black')
+    
+    plt.xlabel('Run Number')
+    plt.ylabel('IPC')
+    
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    plt.tight_layout()
+    plt.savefig(filename)
+    print(f"Generated {filename}")
 
 if __name__ == "__main__":
     all_perf_stats, labels = get_perf_data()
     print_parsed_data(all_perf_stats, labels)
     create_perf_stat_plots(all_perf_stats, labels)
     create_ipc_trend_plot(all_perf_stats, labels)
+
+    # --- Phased Perf Stats Plots ---
+    print("\nGenerating phased perf stats plots...")
+    
+    int_labels_map = {int(l): i for i, l in enumerate(labels)}
+    
+    batches = {
+        "phase1": [1, 2, 3, 4, 5],
+        "phase2": [5, 6, 7, 8, 9],
+        "phase3": [9, 10, 11],
+        "phase4": [11, 12, 13]
+    }
+
+    for name, run_numbers in batches.items():
+        batch_stats = []
+        batch_labels = []
+        for run_num in run_numbers:
+            if run_num in int_labels_map:
+                index = int_labels_map[run_num]
+                batch_stats.append(all_perf_stats[index])
+                
+                adjusted_label = f"{run_num - 1:02d}"
+                if adjusted_label == '00':
+                    adjusted_label += '\n(baseline)'
+                batch_labels.append(adjusted_label)
+        
+        if batch_stats:
+            filename_perf = f"perf_stats_{name}.png"
+            create_phased_perf_plots(batch_stats, batch_labels, filename_perf)
+
+            filename_ipc = f"ipc_trend_{name}.png"
+            create_phased_ipc_trend_plot(batch_stats, batch_labels, filename_ipc)
