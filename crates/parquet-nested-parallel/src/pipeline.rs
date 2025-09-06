@@ -234,38 +234,47 @@ pub struct PipelineMetrics {
     pub records_per_sec: f64,
 }
 
+/// Stream write `RecordBatch`es to Parquet file.
+///
+/// Returns the total physical memory used by `RecordBatch`es in bytes.
+pub fn writer_thread_inner(
+    path: PathBuf,
+    rx: mpsc::Receiver<RecordBatch>,
+    parquet_schema: SchemaRef,
+) -> Result<usize, Box<dyn Error + Send + Sync>> {
+    let parquet_file = File::create(path.as_path())?;
+    let mut parquet_writer = ArrowWriter::try_new(parquet_file, parquet_schema, None)?;
+
+    let mut count = 0;
+    let mut total_bytes = 0;
+
+    for record_batch in rx {
+        // Track the in-memory size of the batch
+        total_bytes += record_batch.get_array_memory_size();
+
+        parquet_writer.write(&record_batch)?;
+        count += record_batch.num_rows();
+    }
+
+    parquet_writer.close()?;
+
+    let mut human_formatter = Formatter::new();
+    human_formatter.with_decimals(0).with_separator("");
+    info!(
+        "Finished writing parquet file: {path}. Wrote {count} records.",
+        path = path.display(),
+        count = human_formatter.format(count as f64)
+    );
+
+    Ok(total_bytes)
+}
+
 fn create_writer_thread(
     path: PathBuf,
     rx: mpsc::Receiver<RecordBatch>,
     parquet_schema: SchemaRef,
 ) -> thread::JoinHandle<Result<usize, Box<dyn Error + Send + Sync>>> {
-    thread::spawn(move || {
-        let parquet_file = File::create(path.as_path())?;
-        let mut parquet_writer = ArrowWriter::try_new(parquet_file, parquet_schema, None)?;
-
-        let mut count = 0;
-        let mut total_bytes = 0;
-
-        for record_batch in rx {
-            // Track the in-memory size of the batch
-            total_bytes += record_batch.get_array_memory_size();
-
-            parquet_writer.write(&record_batch)?;
-            count += record_batch.num_rows();
-        }
-
-        parquet_writer.close()?;
-
-        let mut human_formatter = Formatter::new();
-        human_formatter.with_decimals(0).with_separator("");
-        info!(
-            "Finished writing parquet file: {path}. Wrote {count} records.",
-            path = path.display(),
-            count = human_formatter.format(count as f64)
-        );
-
-        Ok(total_bytes)
-    })
+    thread::spawn(move || writer_thread_inner(path, rx, parquet_schema))
 }
 
 pub fn run_pipeline(

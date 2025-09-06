@@ -20,7 +20,7 @@ rand = { version = "0.9.1" }
 dhat-heap = ["dep:dhat"]
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.5.1", features = ["html_reports"] }
 tempfile = "3.10.1"
 parquet = { version = "55.0.0", default-features = false, features = ["arrow"] }
 arrow = { version = "55.0.0", default-features = false, features = ["prettyprint"] }
