@@ -2909,6 +2909,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "parquet-embed-tantivy"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "crc32fast",
+ "datafusion 48.0.1",
+ "datafusion-catalog 48.0.1",
+ "datafusion-common 48.0.1",
+ "datafusion-datasource 48.0.1",
+ "datafusion-datasource-parquet",
+ "datafusion-execution 48.0.1",
+ "datafusion-expr 48.0.1",
+ "datafusion-physical-plan 48.0.1",
+ "env_logger",
+ "log",
+ "once_cell",
+ "parquet",
+ "serde",
+ "serde_json",
+ "stable_deref_trait",
+ "tantivy",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "parquet-nested-basic"
 version = "0.1.0"
 dependencies = [
@@ -3588,32 +3614,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1adc286a39e089ae9938935cd488d7d34f14502544a36607effd2239ff0e2494"
 dependencies = [
  "bitpacking",
-]
-
-[[package]]
-name = "tantivy-byte-array-index"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "crc32fast",
- "datafusion 48.0.1",
- "datafusion-catalog 48.0.1",
- "datafusion-common 48.0.1",
- "datafusion-datasource 48.0.1",
- "datafusion-datasource-parquet",
- "datafusion-execution 48.0.1",
- "datafusion-expr 48.0.1",
- "datafusion-physical-plan 48.0.1",
- "env_logger",
- "log",
- "once_cell",
- "parquet",
- "serde",
- "serde_json",
- "stable_deref_trait",
- "tantivy",
- "thiserror",
- "tokio",
 ]
 
 [[package]]

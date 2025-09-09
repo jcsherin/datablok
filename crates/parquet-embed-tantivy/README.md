@@ -45,14 +45,14 @@ name. The `RUST_LOG` variable is used to
 control the log output.
 
 ```zsh
-RUST_LOG=info cargo run -p tantivy-byte-array-index
+RUST_LOG=info cargo run -p parquet-embed-tantivy
 ```
 
 To check the code for formatting, linting, and other issues, you can use the
 verification script:
 
 ```zsh
-./scripts/verify.sh tantivy-byte-array-index
+./scripts/verify.sh parquet-embed-tantivy
 ```
 
 ### Expected Output
