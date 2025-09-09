@@ -1133,10 +1133,15 @@ async fn main() -> Result<()> {
     let sql = "SELECT * FROM t where title LIKE '%dairy cow%'";
     info!("Executing Query: {sql}");
     let df = ctx.sql(sql).await?;
-    df.show().await?;
+    let result = df.to_string().await?;
 
-    let df = ctx.sql(sql).await?;
-    df.explain(false, false)?.show().await?;
+    info!("\n{result}");
+
+    let explain_query = format!("EXPLAIN FORMAT TREE {sql}");
+    let df = ctx.sql(&explain_query).await?;
+    let result = df.to_string().await?;
+
+    info!("\n{result}");
 
     Ok(())
 }
