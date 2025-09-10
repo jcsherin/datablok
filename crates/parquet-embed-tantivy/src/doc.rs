@@ -9,7 +9,7 @@ use tantivy::{DocAddress, Searcher, TantivyDocument};
 /// A global counter to ensure each ID is unique for this process.
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Doc {
     id: u64,
     title: String,
