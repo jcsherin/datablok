@@ -1,8 +1,8 @@
 //! A Tantivy full-text search query returns an internal doc address. The `DocMapper` translates
 //! this internal doc address back to the corresponding row in the original data source.
 //!
-//! In the application, this helps in identifying the row identifiers to select in the Parquet file
-//! from the full-text search query results.
+//! In the application, the search results from the full-text index are mapped to rows within a
+//! Parquet file.
 
 use once_cell::sync::Lazy;
 use parquet_embed_tantivy::common::{Config, SchemaFields};
@@ -11,6 +11,7 @@ use parquet_embed_tantivy::error::Result;
 use parquet_embed_tantivy::index::IndexBuilder;
 use parquet_embed_tantivy::query::boolean_query::{
     combine_term_and_phrase_query, title_contains_diary_and_not_girl, title_contains_diary_or_cow,
+    title_contains_phrase_diary_cow,
 };
 use parquet_embed_tantivy::query_session::QuerySession;
 use std::collections::BinaryHeap;
