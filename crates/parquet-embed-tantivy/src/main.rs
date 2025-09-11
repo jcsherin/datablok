@@ -4,20 +4,14 @@ use datafusion_common::arrow::array::{ArrayRef, StringArray};
 use datafusion_common::arrow::datatypes::{DataType, Field, Schema};
 use datafusion_common::arrow::record_batch::RecordBatch;
 use log::info;
-use parquet::arrow::ArrowWriter;
-use parquet::data_type::AsBytes;
-use parquet::file::metadata::KeyValue;
 use parquet_embed_tantivy::common::{Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::doc::{examples, DocSchema};
 use parquet_embed_tantivy::error::Result;
-use parquet_embed_tantivy::index::FULL_TEXT_INDEX_KEY;
 use parquet_embed_tantivy::index::{FullTextIndex, IndexBuilder};
-use std::fs::File;
-use std::ops::Deref;
+use parquet_embed_tantivy::writer::ParquetWriter;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tantivy::HasLen;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -103,34 +97,10 @@ async fn main() -> Result<()> {
     )?;
 
     let saved_path = PathBuf::from("fat.parquet");
-    let file = File::create(&saved_path)?;
 
-    let mut writer = ArrowWriter::try_new(file, arrow_schema_ref.clone(), None)?;
-
-    writer.write(&batch)?;
-    writer.flush()?;
-
-    let offset = writer.bytes_written();
-
-    let header_bytes: Vec<u8> = header.clone().into();
-    writer.write_all(header_bytes.as_bytes())?;
-    writer.write_all(data_block.deref())?;
-
-    info!("Index will be written to offset: {offset}");
-    info!(
-        "Index size: {} bytes",
-        header_bytes.len() + data_block.len()
-    );
-
-    // Store the full-text index offset in `FileMetadata.key_value_metadata` for reading it back
-    // later.
-    writer.append_key_value_metadata(KeyValue::new(
-        FULL_TEXT_INDEX_KEY.to_string(),
-        offset.to_string(),
-    ));
-
-    writer.close()?;
-    info!("Wrote Parquet file to: {}", saved_path.display());
+    let mut writer = ParquetWriter::try_new(saved_path.clone(), arrow_schema_ref.clone(), None)?;
+    writer.write_record_batch(&batch)?;
+    writer.write_index_and_close(header, data_block)?;
 
     // +-------------------------------------+
     // | Read Offset from key_value_metadata |
