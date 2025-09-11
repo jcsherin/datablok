@@ -93,17 +93,19 @@ async fn main() -> Result<()> {
         )?
         .build();
 
+    let (header, data_block) = DraftManifest::try_new(&index)?.try_into(&index)?;
+
     // +----------------+
     // | Query Baseline |
     // +----------------+
     // These identical queries should work on our read-only archive directory implementation.
 
-    let query_session = QuerySession::new(&index)?;
-    let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
-
-    trace!(">>> Querying RamDirectory");
-    run_search_queries(&query_session, &doc_mapper)?;
-    trace!("---");
+    // let query_session = QuerySession::new(&index)?;
+    // let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
+    //
+    // trace!(">>> Querying RamDirectory");
+    // run_search_queries(&query_session, &doc_mapper)?;
+    // trace!("---");
 
     // These are the stages for preparing the index as a sequence of bytes.
     //      1. Draft the FileMetadata.
@@ -135,26 +137,26 @@ async fn main() -> Result<()> {
     // | Header Block |
     // +--------------+
 
-    let (header, data_block) = DraftManifest::try_new(&index)?.try_into(&index)?;
-
-    let header_bytes: Vec<u8> = header.clone().into();
-    let roundtrip_header = Header::try_from(header_bytes.clone())?;
-    trace!(
-        "[Header] data block size:{}, file metadata block size: {} file metadata block crc32:{}",
-        roundtrip_header.total_data_block_size,
-        roundtrip_header.file_metadata_size,
-        roundtrip_header.file_metadata_crc32
-    );
-    trace!("[Header] Round trip header:{roundtrip_header:#?}");
+    // let (header, data_block) = DraftManifest::try_new(&index)?.try_into(&index)?;
+    //
+    // let header_bytes: Vec<u8> = header.clone().into();
+    // let roundtrip_header = Header::try_from(header_bytes.clone())?;
+    // trace!(
+    //     "[Header] data block size:{}, file metadata block size: {} file metadata block crc32:{}",
+    //     roundtrip_header.total_data_block_size,
+    //     roundtrip_header.file_metadata_size,
+    //     roundtrip_header.file_metadata_crc32
+    // );
+    // trace!("[Header] Round trip header:{roundtrip_header:#?}");
 
     // +----------------------+
     // | Blob Index Directory |
     // +----------------------+
-    let archive_dir = ReadOnlyArchiveDirectory::new(roundtrip_header, data_block.clone());
-    trace!("Read-only Archive Directory:{archive_dir:?}");
+    // let archive_dir = ReadOnlyArchiveDirectory::new(roundtrip_header, data_block.clone());
+    // trace!("Read-only Archive Directory:{archive_dir:?}");
 
-    let read_only_index = Index::open_or_create(archive_dir, schema.as_ref().clone())?;
-    let index_wrapper = ImmutableIndex::new(read_only_index);
+    // let read_only_index = Index::open_or_create(archive_dir, schema.as_ref().clone())?;
+    // let index_wrapper = ImmutableIndex::new(read_only_index);
 
     // +---------------------------+
     // | Query Baseline Comparison |
@@ -163,11 +165,11 @@ async fn main() -> Result<()> {
     // querying it works without problems. The same queries should return identical results when
     // applied against the read-only archive directory implementation.
 
-    let query_session = QuerySession::new(&index_wrapper)?;
-    let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
-
-    trace!(">>> Querying ReadOnlyArchiveDirectory");
-    run_search_queries(&query_session, &doc_mapper)?;
+    // let query_session = QuerySession::new(&index_wrapper)?;
+    // let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
+    //
+    // trace!(">>> Querying ReadOnlyArchiveDirectory");
+    // run_search_queries(&query_session, &doc_mapper)?;
 
     // +---------------------------------------+
     // | Embed Full-Text Index in Parquet File |
@@ -216,6 +218,7 @@ async fn main() -> Result<()> {
 
     let offset = writer.bytes_written();
 
+    let header_bytes: Vec<u8> = header.clone().into();
     writer.write_all(header_bytes.as_bytes())?;
     writer.write_all(data_block.deref())?;
 
