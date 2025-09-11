@@ -44,7 +44,7 @@ use std::ffi::OsStr;
 use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::io::{BufWriter, Error, ErrorKind, Read, Seek, SeekFrom, Write};
-use std::ops::{Deref, Range};
+use std::ops::{Deref, DerefMut, Range};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -58,8 +58,199 @@ use tantivy::query::{PhraseQuery, Query};
 use tantivy::schema::{Schema as IndexSchema, Value};
 use tantivy::{Directory, HasLen, Index, TantivyDocument, Term, INDEX_FORMAT_VERSION};
 
+const TANTIVY_METADATA_PATH: &str = "meta.json";
+
+/// A logical view of the directory contents of a Tantivy index.
+enum LogicalFileSlice {
+    /// In-memory binary blob of `meta.json`
+    MetaJson(Vec<u8>),
+    /// Logical slice of index binary files
+    IndexDataFile(FileSlice),
+}
+
+struct LogicalFileSliceStat {
+    total_bytes: u64,
+    footer_bytes: u8,
+}
+
+impl LogicalFileSlice {
+    fn try_new(index: &ImmutableIndex, path: &Path) -> Result<Self> {
+        if path == Path::new(TANTIVY_METADATA_PATH) {
+            let meta_bytes = index.directory().atomic_read(path)?;
+            Ok(LogicalFileSlice::MetaJson(meta_bytes))
+        } else {
+            let data_bytes = index.directory().open_read(path)?;
+            Ok(LogicalFileSlice::IndexDataFile(data_bytes))
+        }
+    }
+
+    fn size_in_bytes(&self) -> u64 {
+        match self {
+            LogicalFileSlice::MetaJson(bytes) => bytes.len() as u64,
+            LogicalFileSlice::IndexDataFile(bytes) => bytes.len() as u64,
+        }
+    }
+
+    fn try_append_to_buffer(
+        &self,
+        buf: &mut Vec<u8>,
+        draft: &FileMetadata,
+    ) -> Result<LogicalFileSliceStat> {
+        match self {
+            LogicalFileSlice::MetaJson(bytes) => {
+                debug_assert_eq!(
+                    draft.data_content_len as usize,
+                    bytes.len(),
+                    "Expected size of MetaJson to match the size in draft FileMetadata. Draft: {draft:?}"
+                );
+
+                buf.extend_from_slice(bytes);
+
+                Ok(LogicalFileSliceStat {
+                    total_bytes: bytes.len() as u64,
+                    footer_bytes: 0,
+                })
+            }
+            LogicalFileSlice::IndexDataFile(bytes) => {
+                debug_assert_eq!(
+                    draft.data_content_len as usize,
+                    bytes.len(),
+                    "Expected size of IndexDataFile to match the size in draft FileMetadata. Draft: {draft:?}"
+                );
+
+                let mut crc_hasher = Hasher::new();
+                let mut total_bytes = 0;
+                for chunk in bytes.stream_file_chunks() {
+                    let chunk = chunk?;
+
+                    total_bytes += chunk.len() as u64;
+                    crc_hasher.update(&chunk);
+
+                    buf.extend(chunk.as_slice());
+                }
+                let crc_hash = crc_hasher.finalize();
+                let footer_bytes = TantivyFooterHack::new(crc_hash).to_bytes()?;
+                total_bytes += footer_bytes.len() as u64;
+
+                buf.extend(&footer_bytes);
+
+                Ok(LogicalFileSliceStat {
+                    total_bytes,
+                    footer_bytes: footer_bytes.len() as u8,
+                })
+            }
+        }
+    }
+}
+
+/// A draft manifest of the physical files managed by the Tantivy index.
+///
+/// The content related fields in `FileMetadata` are backfilled when the data block are assembled,
+/// to create a final version of the manifest.
+pub struct DraftManifest(Vec<FileMetadata>);
+
+impl Deref for DraftManifest {
+    type Target = Vec<FileMetadata>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for DraftManifest {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl DraftManifest {
+    pub fn try_new(index: &ImmutableIndex) -> Result<Self> {
+        let inner = index
+            .directory()
+            .list_managed_files()
+            .iter()
+            .map(|path| {
+                let file = LogicalFileSlice::try_new(index, path)?;
+                Ok(FileMetadata::new(
+                    PathBuf::from(path),
+                    file.size_in_bytes(),
+                    0,
+                    0,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        inner.iter().for_each(|draft| trace!("{draft:?}"));
+
+        Ok(Self(inner))
+    }
+
+    pub fn try_into(mut self, index: &ImmutableIndex) -> Result<(Header, DataBlock)> {
+        let mut buf: Vec<u8> = vec![];
+        let mut current_offset = 0;
+
+        for meta in self.iter_mut() {
+            let slice = LogicalFileSlice::try_new(index, &meta.path)?;
+            let stat = slice.try_append_to_buffer(&mut buf, meta)?;
+
+            meta.data_offset = current_offset;
+            meta.data_footer_len = stat.footer_bytes;
+
+            current_offset += stat.total_bytes;
+
+            trace!("Data block size: {}", stat.total_bytes);
+            trace!("FileMetadata after backfill: {meta:?}");
+        }
+
+        let final_manifest = FinalManifest(self.0);
+        let data_block = DataBlock::new(buf);
+
+        let header = final_manifest.into_header(data_block.len() as u64);
+
+        Ok((header, data_block))
+    }
+}
+
+struct FinalManifest(Vec<FileMetadata>);
+
+impl Deref for FinalManifest {
+    type Target = Vec<FileMetadata>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl FinalManifest {
+    pub fn into_header(self, data_block_size: u64) -> Header {
+        let file_count = self.len();
+
+        let file_metadata_list_bytes = self
+            .iter()
+            .flat_map(|meta| -> Vec<u8> { meta.into() })
+            .collect::<Vec<_>>();
+        let file_metadata_list_bytes_size = file_metadata_list_bytes.len();
+        let file_metadata_list_crc32 = crc32fast::hash(&file_metadata_list_bytes);
+
+        let header = Header::default()
+            .set_version(VERSION)
+            .set_file_count(file_count as u32)
+            .set_file_metadata_size(file_metadata_list_bytes_size as u32)
+            .set_file_metadata_crc32(file_metadata_list_crc32)
+            .set_total_data_block_size(data_block_size)
+            .set_file_metadata_list(&self);
+
+        trace!("Magic: {MAGIC_BYTES:?}");
+        trace!("Header: data_block_size={}", header.total_data_block_size);
+        trace!("Header: file_metadata_size={}", header.file_metadata_size);
+        trace!("Header: file_metadata_crc32={}", header.file_metadata_crc32);
+
+        header
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Clone)]
-struct FileMetadata {
+pub struct FileMetadata {
     /// Offset in data section from where the file contents start
     data_offset: u64,
     /// Logical length of index file with the footer removed
@@ -149,7 +340,7 @@ impl From<&FileMetadata> for Vec<u8> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-struct Header {
+pub struct Header {
     version: u8,
     file_count: u32,
     total_data_block_size: u64,
@@ -291,7 +482,7 @@ impl TryFrom<Vec<u8>> for Header {
 }
 
 #[derive(Clone)]
-struct DataBlock {
+pub struct DataBlock {
     data: Arc<[u8]>,
     range: Range<usize>,
 }
@@ -410,7 +601,6 @@ impl TantivyFooterHack {
         Ok(payload)
     }
 }
-
 #[allow(dead_code)]
 #[derive(Debug)]
 struct InnerDirectory {
@@ -802,7 +992,6 @@ fn run_search_queries(query_session: &QuerySession, doc_mapper: &DocMapper) -> R
     Ok(())
 }
 
-const TANTIVY_METADATA_PATH: &str = "meta.json";
 const FULL_TEXT_INDEX_KEY: &str = "tantivy_index_offset";
 
 #[tokio::main]
@@ -822,9 +1011,6 @@ async fn main() -> Result<()> {
             original_docs,
         )?
         .build();
-
-    let metadata_path: PathBuf = PathBuf::from(TANTIVY_METADATA_PATH);
-    let dir = index.directory();
 
     // +----------------+
     // | Query Baseline |
@@ -854,34 +1040,6 @@ async fn main() -> Result<()> {
     // The other fields are known only while building the data block. So it will be back-filled
     // when the data blocks are being written.
 
-    let mut file_metadata_list = Vec::<FileMetadata>::new();
-    enum LogicalSlice {
-        MetaJson(Vec<u8>),
-        IndexDataFile(FileSlice),
-    }
-
-    let get_logical_slice = |path: &Path| -> Result<LogicalSlice> {
-        let logical_slice = if path.eq(&metadata_path) {
-            LogicalSlice::MetaJson(dir.atomic_read(path)?)
-        } else {
-            LogicalSlice::IndexDataFile(dir.open_read(path)?)
-        };
-
-        Ok(logical_slice)
-    };
-
-    for (i, path) in dir.list_managed_files().iter().enumerate() {
-        let logical_size = get_logical_slice(path).map(|value| match value {
-            LogicalSlice::MetaJson(inner) => inner.len(),
-            LogicalSlice::IndexDataFile(inner) => inner.len(),
-        })?;
-        let draft = FileMetadata::new(path.to_path_buf(), logical_size as u64, 0, 0);
-
-        trace!("[{i}] {draft:#?}");
-
-        file_metadata_list.push(draft);
-    }
-
     // +------------+
     // | Data Block |
     // +------------+
@@ -892,89 +1050,11 @@ async fn main() -> Result<()> {
     // Now we can back-fill the `data_footer_len` field in `FileMetadata`. We can also now compute
     // and back-fill the `data_offset` of the next `FileMetadata` entry.
 
-    let mut data_block_bytes = Vec::<u8>::new();
-    let mut current_offset = 0;
-    for (i, file_metadata) in file_metadata_list.iter_mut().enumerate() {
-        let contents = get_logical_slice(&file_metadata.path)?;
-        let mut physical_size: u64 = 0;
-        match contents {
-            LogicalSlice::MetaJson(data) => {
-                debug_assert_eq!(file_metadata.data_content_len as usize, data.len(),);
-                physical_size = data.len() as u64;
-
-                // Back-fill FileMetadata properties
-                debug_assert_eq!(file_metadata.data_offset, 0);
-                debug_assert_eq!(file_metadata.data_footer_len, 0);
-
-                file_metadata.data_offset = current_offset;
-                file_metadata.data_footer_len = 0; // footer is only for binary index files
-
-                // Append bytes to data block
-                data_block_bytes.extend(data);
-            }
-            LogicalSlice::IndexDataFile(file_slice) => {
-                let mut crc_hasher = Hasher::new();
-                for chunk in file_slice.stream_file_chunks() {
-                    let chunk = chunk?;
-
-                    physical_size += chunk.len() as u64;
-                    crc_hasher.update(&chunk);
-
-                    data_block_bytes.extend(chunk.as_slice());
-                }
-
-                debug_assert_eq!(file_metadata.data_content_len, physical_size);
-
-                let crc_hash = crc_hasher.finalize();
-
-                // Back-fill FileMetadata properties
-                debug_assert_eq!(file_metadata.data_offset, 0);
-                debug_assert_eq!(file_metadata.data_footer_len, 0);
-
-                file_metadata.data_offset = current_offset;
-
-                let footer = TantivyFooterHack::new(crc_hash).to_bytes()?;
-                physical_size += footer.len() as u64;
-                file_metadata.data_footer_len = footer.len() as u8;
-
-                data_block_bytes.extend(footer);
-            }
-        }
-        // Update offset for (N+1)th file
-        current_offset += physical_size;
-
-        trace!("[{i}] Data block size: {}", data_block_bytes.len());
-        trace!("[{i}] FileMetadata (after back-fill) {file_metadata:#?}");
-    }
-    let data_block = DataBlock::new(data_block_bytes.clone());
-
     // +--------------+
     // | Header Block |
     // +--------------+
-    let file_count = file_metadata_list.len();
-    let total_data_block_size = data_block.len();
 
-    let file_metadata_list_bytes = file_metadata_list
-        .iter()
-        .fold(Vec::<u8>::new(), |acc, fm| [acc, fm.into()].concat());
-    let file_metadata_list_bytes_size = file_metadata_list_bytes.len();
-    let file_metadata_list_crc32 = crc32fast::hash(&file_metadata_list_bytes);
-
-    let header = Header::default()
-        .set_version(VERSION)
-        .set_file_count(file_count as u32)
-        .set_file_metadata_size(file_metadata_list_bytes_size as u32)
-        .set_file_metadata_crc32(file_metadata_list_crc32)
-        .set_total_data_block_size(total_data_block_size as u64)
-        .set_file_metadata_list(&file_metadata_list);
-
-    trace!("Magic: {MAGIC_BYTES:?}");
-    trace!(
-        "[Header] data block size:{}, file metadata block size: {} file metadata block crc32:{}",
-        header.total_data_block_size,
-        header.file_metadata_size,
-        header.file_metadata_crc32
-    );
+    let (header, data_block) = DraftManifest::try_new(&index)?.try_into(&index)?;
 
     let header_bytes: Vec<u8> = header.clone().into();
     let roundtrip_header = Header::try_from(header_bytes.clone())?;
@@ -989,7 +1069,7 @@ async fn main() -> Result<()> {
     // +----------------------+
     // | Blob Index Directory |
     // +----------------------+
-    let archive_dir = ReadOnlyArchiveDirectory::new(roundtrip_header, data_block);
+    let archive_dir = ReadOnlyArchiveDirectory::new(roundtrip_header, data_block.clone());
     trace!("Read-only Archive Directory:{archive_dir:?}");
 
     let read_only_index = Index::open_or_create(archive_dir, schema.as_ref().clone())?;
@@ -1056,12 +1136,12 @@ async fn main() -> Result<()> {
     let offset = writer.bytes_written();
 
     writer.write_all(header_bytes.as_bytes())?;
-    writer.write_all(data_block_bytes.as_bytes())?;
+    writer.write_all(data_block.deref())?;
 
     info!("Index will be written to offset: {offset}");
     info!(
         "Index size: {} bytes",
-        header_bytes.len() + data_block_bytes.len()
+        header_bytes.len() + data_block.len()
     );
 
     // Store the full-text index offset in `FileMetadata.key_value_metadata` for reading it back
