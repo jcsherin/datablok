@@ -4,7 +4,7 @@ use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
-#[derive(Debug, Default, PartialEq, Clone)]
+#[derive(Debug, Default, Eq, PartialEq, Clone)]
 pub struct FileMetadata {
     /// Offset in data section from where the file contents start
     pub data_offset: u64,

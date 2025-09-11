@@ -2,10 +2,10 @@ use crate::custom_index::file_metadata::FileMetadata;
 use crc32fast::Hasher;
 use std::io::Read;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Header {
-    version: u8,
-    file_count: u32,
+    pub version: u8,
+    pub file_count: u32,
     pub total_data_block_size: u64,
     pub file_metadata_size: u32,
     pub file_metadata_crc32: u32,
