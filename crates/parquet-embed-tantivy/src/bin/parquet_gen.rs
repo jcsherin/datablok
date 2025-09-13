@@ -1,12 +1,19 @@
 use clap::Parser;
+use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, UInt64Builder};
+use datafusion::arrow::datatypes::SchemaRef;
+use fs::create_dir_all;
 use log::trace;
 use parquet_embed_tantivy::common::{setup_logging, Config, SchemaFields};
 use parquet_embed_tantivy::data_generator::title::TitleGenerator;
 use parquet_embed_tantivy::data_generator::words::SELECTIVITY_PHRASES;
-use parquet_embed_tantivy::doc::{Doc, DocTantivySchema};
+use parquet_embed_tantivy::doc::{ArrowDocSchema, Doc, DocTantivySchema};
 use parquet_embed_tantivy::error::Error::FieldNotFound;
 use parquet_embed_tantivy::error::Result;
 use parquet_embed_tantivy::index::{TantivyDocIndex, TantivyDocIndexBuilder};
+use parquet_embed_tantivy::writer::ParquetWriter;
+use std::fs;
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tantivy::query::{BooleanQuery, Occur, TermQuery};
 use tantivy::schema::IndexRecordOption;
@@ -23,6 +30,14 @@ struct Args {
     /// Total number of rows to generate
     #[arg(short, long, default_value_t = 100)]
     target_size: u64,
+
+    /// Size of each RecordBatch
+    #[arg(short, long, default_value_t = 8192)]
+    record_batch_size: usize,
+
+    /// Output directory for generated parquet files
+    #[arg(short, long, default_value = "output")]
+    output_directory: PathBuf,
 }
 
 fn create_data_source(size: u64) -> Vec<Doc> {
@@ -66,21 +81,72 @@ fn phrase_queries() -> Result<Vec<BooleanQuery>> {
         .collect::<Vec<_>>())
 }
 
+const MAX_TITLE_SIZE: usize = 120;
+fn create_parquet_file(
+    output_directory: &Path,
+    filename: &str,
+    schema: SchemaRef,
+    record_batch_size: usize,
+    data_source: &[Doc],
+) -> Result<()> {
+    if !output_directory.exists() {
+        create_dir_all(output_directory)?;
+    }
+    let output_path = output_directory.join(filename);
+
+    trace!("Writing parquet file to: {}", output_path.display());
+    let mut writer = ParquetWriter::try_new(output_path, schema.clone(), None)?;
+
+    for chunk in data_source.chunks(record_batch_size) {
+        let chunk_size = chunk.len();
+
+        let mut id_builder = UInt64Builder::with_capacity(chunk_size);
+        let mut title_builder =
+            StringBuilder::with_capacity(chunk_size, chunk_size * MAX_TITLE_SIZE);
+
+        chunk.iter().for_each(|doc| {
+            id_builder.append_value(doc.id());
+            title_builder.append_value(doc.title());
+        });
+
+        let id_array = Arc::new(id_builder.finish()) as ArrayRef;
+        let title_array = Arc::new(title_builder.finish()) as ArrayRef;
+
+        let batch = RecordBatch::try_new(schema.clone(), vec![id_array, title_array])?;
+        writer.write_record_batch(&batch)?
+    }
+
+    writer.close()?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     setup_logging();
 
     let args = Args::parse();
 
     let data_source = create_data_source(args.target_size);
+
+    // Tantivy Full-Text Index
     let tantivy_doc_index = create_tantivy_doc_index(&data_source)?;
 
     let reader = tantivy_doc_index.reader()?;
     let searcher = reader.searcher();
 
+    // How many times do the control terms occur?
     for query in phrase_queries()? {
         let count = searcher.search(&query, &tantivy::collector::Count)?;
         trace!("query: {query:?}, count: {count}");
     }
+
+    // Create a normal Parquet file from input data source
+    create_parquet_file(
+        args.output_directory.as_ref(),
+        "titles.parquet",
+        ArrowDocSchema::default().deref().clone(),
+        args.record_batch_size,
+        &data_source,
+    )?;
 
     Ok(())
 }

@@ -7,3 +7,4 @@
 # Ignore RustRover
 .idea/
 /output_parquet/
+/output/

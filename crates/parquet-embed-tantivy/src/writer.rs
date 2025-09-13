@@ -37,6 +37,12 @@ impl ParquetWriter {
         Ok(())
     }
 
+    pub fn close(mut self) -> Result<()> {
+        self.writer.flush()?;
+        self.writer.close()?;
+        Ok(())
+    }
+
     pub fn write_index_and_close(mut self, header: Header, data_block: DataBlock) -> Result<()> {
         self.writer.flush()?;
 
