@@ -2,7 +2,7 @@ use once_cell::sync::Lazy;
 use parquet_embed_tantivy::common::Config;
 use parquet_embed_tantivy::doc::{Doc, DocIdMapper, DocMapper};
 use parquet_embed_tantivy::error::Result;
-use parquet_embed_tantivy::index::ImmutableIndex;
+use parquet_embed_tantivy::index::TantivyDocIndex;
 use parquet_embed_tantivy::query_session::QuerySession;
 use std::collections::BinaryHeap;
 use tantivy::collector::{Count, DocSetCollector};
@@ -29,7 +29,7 @@ pub fn create_test_docs() -> &'static [Doc] {
 }
 
 pub fn assert_search_result_matches_source_data(
-    index: &ImmutableIndex,
+    index: &TantivyDocIndex,
     config: &Config,
     expected: &[(u64, String, Option<String>)],
     query_builder: impl FnOnce(&Schema) -> Result<BooleanQuery>,

@@ -2,7 +2,7 @@ use crate::custom_index::data_block::DataBlock;
 use crate::custom_index::file_metadata::FileMetadata;
 use crate::custom_index::file_slice::LogicalFileSlice;
 use crate::custom_index::header::{Header, MAGIC_BYTES, VERSION};
-use crate::index::ImmutableIndex;
+use crate::index::TantivyDocIndex;
 use log::trace;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
@@ -28,7 +28,7 @@ impl DerefMut for DraftManifest {
 }
 
 impl DraftManifest {
-    pub fn try_new(index: &ImmutableIndex) -> crate::error::Result<Self> {
+    pub fn try_new(index: &TantivyDocIndex) -> crate::error::Result<Self> {
         let inner = index
             .directory()
             .list_managed_files()
@@ -49,7 +49,10 @@ impl DraftManifest {
         Ok(Self(inner))
     }
 
-    pub fn try_into(mut self, index: &ImmutableIndex) -> crate::error::Result<(Header, DataBlock)> {
+    pub fn try_into(
+        mut self,
+        index: &TantivyDocIndex,
+    ) -> crate::error::Result<(Header, DataBlock)> {
         let mut buf: Vec<u8> = vec![];
         let mut current_offset = 0;
 

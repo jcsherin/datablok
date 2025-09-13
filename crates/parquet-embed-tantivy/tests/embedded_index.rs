@@ -10,7 +10,7 @@ use parquet_embed_tantivy::doc::{
     generate_record_batch_for_docs, ArrowDocSchema, DocTantivySchema,
 };
 use parquet_embed_tantivy::error::Error::ParquetMetadata;
-use parquet_embed_tantivy::index::{ImmutableIndex, IndexBuilder, FULL_TEXT_INDEX_KEY};
+use parquet_embed_tantivy::index::{TantivyDocIndex, TantivyDocIndexBuilder, FULL_TEXT_INDEX_KEY};
 use parquet_embed_tantivy::query::boolean_query::{
     combine_term_and_phrase_query, title_contains_diary_and_not_girl, title_contains_diary_or_cow,
 };
@@ -31,7 +31,7 @@ fn test_embedded_full_text_index() {
 
     let source_dataset = create_test_docs();
 
-    let index = IndexBuilder::new(schema.clone())
+    let index = TantivyDocIndexBuilder::new(schema.clone())
         .index_and_commit(
             config.index_writer_memory_budget_in_bytes,
             &fields,
@@ -104,7 +104,7 @@ fn test_embedded_full_text_index() {
     let index_dir = ReadOnlyArchiveDirectory::new(index_header, index_data);
 
     let read_only_index = Index::open_or_create(index_dir, schema.as_ref().clone()).unwrap();
-    let index_wrapper = ImmutableIndex::new(read_only_index);
+    let index_wrapper = TantivyDocIndex::new(read_only_index);
 
     assert_search_result_matches_source_data(
         &index_wrapper,

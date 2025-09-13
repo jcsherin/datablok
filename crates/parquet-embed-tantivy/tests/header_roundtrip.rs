@@ -2,7 +2,7 @@ use parquet_embed_tantivy::common::{Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::header::Header;
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::doc::DocTantivySchema;
-use parquet_embed_tantivy::index::IndexBuilder;
+use parquet_embed_tantivy::index::TantivyDocIndexBuilder;
 use std::sync::Arc;
 mod common;
 
@@ -13,7 +13,7 @@ fn roundtrip_custom_index_header() {
 
     let fields = SchemaFields::new(schema.clone(), &config).unwrap();
 
-    let index = IndexBuilder::new(schema.clone())
+    let index = TantivyDocIndexBuilder::new(schema.clone())
         .index_and_commit(
             config.index_writer_memory_budget_in_bytes,
             &fields,

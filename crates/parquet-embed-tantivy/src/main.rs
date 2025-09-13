@@ -6,7 +6,7 @@ use parquet_embed_tantivy::doc::{
     generate_record_batch_for_docs, tiny_docs, ArrowDocSchema, DocTantivySchema,
 };
 use parquet_embed_tantivy::error::Result;
-use parquet_embed_tantivy::index::{FullTextIndex, IndexBuilder};
+use parquet_embed_tantivy::index::{FullTextIndex, TantivyDocIndexBuilder};
 use parquet_embed_tantivy::writer::ParquetWriter;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
 
     let fields = SchemaFields::new(schema.clone(), &config)?;
 
-    let index = IndexBuilder::new(schema.clone())
+    let index = TantivyDocIndexBuilder::new(schema.clone())
         .index_and_commit(
             config.index_writer_memory_budget_in_bytes,
             &fields,

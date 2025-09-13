@@ -1,5 +1,5 @@
 use crate::custom_index::file_metadata::FileMetadata;
-use crate::index::ImmutableIndex;
+use crate::index::TantivyDocIndex;
 use crc32fast::Hasher;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -22,7 +22,7 @@ pub struct LogicalFileSliceStat {
 }
 
 impl LogicalFileSlice {
-    pub fn try_new(index: &ImmutableIndex, path: &Path) -> crate::error::Result<Self> {
+    pub fn try_new(index: &TantivyDocIndex, path: &Path) -> crate::error::Result<Self> {
         if path == Path::new(TANTIVY_METADATA_PATH) {
             let meta_bytes = index.directory().atomic_read(path)?;
             Ok(LogicalFileSlice::MetaJson(meta_bytes))

@@ -3,7 +3,7 @@
 /// The selectivity determines the probability with which the phrase
 /// appears in a random distribution. Here 0.5 is 50%, 0.1 is 10% and
 /// so on...
-pub(crate) const SELECTIVITY_PHRASES: &[(&str, f64)] = &[
+pub const SELECTIVITY_PHRASES: &[(&str, f64)] = &[
     ("concurrency", 0.20),
     ("runtime", 0.10),
     ("indexing", 0.05),

@@ -7,18 +7,18 @@
 use crate::common::{assert_search_result_matches_source_data, SOURCE_DATASET};
 use parquet_embed_tantivy::common::{Config, SchemaFields};
 use parquet_embed_tantivy::doc::DocTantivySchema;
-use parquet_embed_tantivy::index::{ImmutableIndex, IndexBuilder};
+use parquet_embed_tantivy::index::{TantivyDocIndex, TantivyDocIndexBuilder};
 use parquet_embed_tantivy::query::boolean_query::{
     combine_term_and_phrase_query, title_contains_diary_and_not_girl, title_contains_diary_or_cow,
 };
 use std::sync::Arc;
 mod common;
 
-fn setup_full_text_search_index(config: &Config) -> ImmutableIndex {
+fn setup_full_text_search_index(config: &Config) -> TantivyDocIndex {
     let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
     let fields = SchemaFields::new(schema.clone(), &config).unwrap();
 
-    IndexBuilder::new(schema.clone())
+    TantivyDocIndexBuilder::new(schema.clone())
         .index_and_commit(
             config.index_writer_memory_budget_in_bytes,
             &fields,

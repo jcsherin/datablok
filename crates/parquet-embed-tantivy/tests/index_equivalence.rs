@@ -3,7 +3,7 @@ use parquet_embed_tantivy::common::{Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::directory::ReadOnlyArchiveDirectory;
 use parquet_embed_tantivy::doc::DocTantivySchema;
-use parquet_embed_tantivy::index::{ImmutableIndex, IndexBuilder};
+use parquet_embed_tantivy::index::{TantivyDocIndex, TantivyDocIndexBuilder};
 use parquet_embed_tantivy::query::boolean_query::{
     combine_term_and_phrase_query, title_contains_diary_and_not_girl, title_contains_diary_or_cow,
 };
@@ -20,7 +20,7 @@ fn test_search_results_equivalence() {
     let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
     let fields = SchemaFields::new(schema.clone(), &config).unwrap();
 
-    let tantivy_in_memory_index = IndexBuilder::new(schema.clone())
+    let tantivy_in_memory_index = TantivyDocIndexBuilder::new(schema.clone())
         .index_and_commit(
             config.index_writer_memory_budget_in_bytes,
             &fields,
@@ -34,7 +34,7 @@ fn test_search_results_equivalence() {
         .try_into(&tantivy_in_memory_index)
         .unwrap();
     let byte_array_directory = ReadOnlyArchiveDirectory::new(header, data_block);
-    let custom_index = ImmutableIndex::new(
+    let custom_index = TantivyDocIndex::new(
         Index::open_or_create(byte_array_directory, schema.as_ref().clone()).unwrap(),
     );
 

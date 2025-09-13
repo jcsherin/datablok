@@ -32,11 +32,11 @@ use tantivy::query::{PhraseQuery, Query};
 use tantivy::schema::{Schema, Value};
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term};
 
-pub struct IndexBuilder {
+pub struct TantivyDocIndexBuilder {
     index: Index,
 }
 
-impl IndexBuilder {
+impl TantivyDocIndexBuilder {
     pub fn new(schema: Arc<Schema>) -> Self {
         Self {
             index: Index::create_in_ram(schema.as_ref().clone()),
@@ -64,16 +64,16 @@ impl IndexBuilder {
         Ok(self)
     }
 
-    pub fn build(self) -> ImmutableIndex {
-        ImmutableIndex::new(self.index)
+    pub fn build(self) -> TantivyDocIndex {
+        TantivyDocIndex::new(self.index)
     }
 }
 
-pub struct ImmutableIndex {
+pub struct TantivyDocIndex {
     index: Index,
 }
 
-impl ImmutableIndex {
+impl TantivyDocIndex {
     pub fn new(index: Index) -> Self {
         Self { index }
     }
