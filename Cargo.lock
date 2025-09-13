@@ -2913,6 +2913,7 @@ name = "parquet-embed-tantivy"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "clap",
  "crc32fast",
  "datafusion 48.0.1",
  "datafusion-catalog 48.0.1",

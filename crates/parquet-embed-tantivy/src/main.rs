@@ -1,6 +1,6 @@
 use datafusion::prelude::SessionContext;
 use log::{info, trace};
-use parquet_embed_tantivy::common::{Config, SchemaFields};
+use parquet_embed_tantivy::common::{setup_logging, Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::doc::{
     generate_record_batch_for_docs, tiny_docs, ArrowDocSchema, DocTantivySchema,
@@ -103,9 +103,4 @@ async fn main() -> Result<()> {
     std::fs::remove_file(&parquet_file_path)?;
 
     Ok(())
-}
-
-/// Initializes the logger.
-fn setup_logging() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 }
