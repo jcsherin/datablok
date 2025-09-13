@@ -1,14 +1,17 @@
-use rand::prelude::{IndexedRandom, SliceRandom, ThreadRng};
-use rand::Rng;
+use rand::prelude::{IndexedRandom, SliceRandom};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 #[derive(Debug)]
 pub struct TitleGenerator {
-    rng: ThreadRng,
+    rng: StdRng,
 }
 
 impl Default for TitleGenerator {
     fn default() -> Self {
-        Self { rng: rand::rng() }
+        Self {
+            rng: StdRng::seed_from_u64(0),
+        }
     }
 }
 
