@@ -26,14 +26,6 @@ pub mod boolean_query {
         ))
     }
 
-    #[allow(dead_code)]
-    fn body_term_query(body: Field) -> Box<dyn Query> {
-        Box::new(TermQuery::new(
-            Term::from_field_text(body, "found"),
-            IndexRecordOption::Basic,
-        ))
-    }
-
     /// Make a boolean query equivalent to: title:+diary title:-girl
     pub fn title_contains_diary_and_not_girl(schema: &Schema) -> Result<BooleanQuery> {
         let title_field = schema

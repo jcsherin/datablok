@@ -55,9 +55,6 @@ impl IndexBuilder {
             let mut tantivy_doc = TantivyDocument::default();
             tantivy_doc.add_u64(fields.id, doc.id());
             tantivy_doc.add_text(fields.title, doc.title());
-            if let Some(body) = doc.body() {
-                tantivy_doc.add_text(fields.body, body);
-            }
 
             index_writer.add_document(tantivy_doc)?;
         }

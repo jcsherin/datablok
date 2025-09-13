@@ -10,16 +10,18 @@ use tantivy::query::BooleanQuery;
 use tantivy::schema::Schema;
 
 pub static SOURCE_DATASET: Lazy<Vec<Doc>> = Lazy::new(|| {
-    vec![
-        ("The Name of the Wind".to_string(), None),
-        ("The Diary of Muadib".to_string(), None),
-        ("A Dairy Cow".to_string(), Some("hidden".to_string())),
-        ("A Dairy Cow".to_string(), Some("found".to_string())),
-        ("The Diary of a Young Girl".to_string(), None),
-    ]
-    .into_iter()
-    .map(|(title, body)| Doc::new(title, body))
-    .collect()
+    let docs = vec![
+        "The Name of the Wind".to_string(),
+        "The Diary of Muadib".to_string(),
+        "A Dairy Cow".to_string(),
+        "A Dairy Cow".to_string(),
+        "The Diary of a Young Girl".to_string(),
+    ];
+
+    (0..docs.len())
+        .zip(docs)
+        .map(|(id, title)| Doc::new(id as u64, title))
+        .collect()
 });
 
 pub fn create_test_docs() -> &'static [Doc] {
@@ -60,6 +62,5 @@ pub fn assert_search_result_matches_source_data(
     for (expected, matching_doc) in expected.iter().zip(matching_docs) {
         assert_eq!(matching_doc.id(), expected.0);
         assert_eq!(matching_doc.title(), expected.1);
-        assert_eq!(matching_doc.body(), expected.2.as_deref());
     }
 }
