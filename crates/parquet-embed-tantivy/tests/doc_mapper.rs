@@ -4,20 +4,14 @@
 //! In the application, the search results from the full-text index are mapped to rows within a
 //! Parquet file.
 
-use crate::common::SOURCE_DATASET;
+use crate::common::{assert_search_result_matches_source_data, SOURCE_DATASET};
 use parquet_embed_tantivy::common::{Config, SchemaFields};
-use parquet_embed_tantivy::doc::{DocIdMapper, DocMapper, DocTantivySchema};
-use parquet_embed_tantivy::error::Result;
+use parquet_embed_tantivy::doc::DocTantivySchema;
 use parquet_embed_tantivy::index::{ImmutableIndex, IndexBuilder};
 use parquet_embed_tantivy::query::boolean_query::{
     combine_term_and_phrase_query, title_contains_diary_and_not_girl, title_contains_diary_or_cow,
 };
-use parquet_embed_tantivy::query_session::QuerySession;
-use std::collections::BinaryHeap;
 use std::sync::Arc;
-use tantivy::collector::{Count, DocSetCollector};
-use tantivy::query::BooleanQuery;
-use tantivy::schema::Schema;
 mod common;
 
 fn setup_full_text_search_index(config: &Config) -> ImmutableIndex {
@@ -34,43 +28,6 @@ fn setup_full_text_search_index(config: &Config) -> ImmutableIndex {
         .build()
 }
 
-fn assert_search_result_matches_source_data(
-    index: &ImmutableIndex,
-    config: &Config,
-    expected: &[(u64, String, Option<String>)],
-    query_builder: impl FnOnce(&Schema) -> Result<BooleanQuery>,
-) {
-    let query_session = QuerySession::new(&index).unwrap();
-    let query = query_builder(&query_session.schema()).unwrap();
-
-    let (doc_count, matching_docs) = query_session
-        .search(&query, &(Count, DocSetCollector))
-        .unwrap();
-
-    let expected_doc_count = expected.len();
-    assert_eq!(doc_count, expected_doc_count);
-
-    let doc_mapper = DocMapper::new(query_session.searcher(), config, &SOURCE_DATASET);
-
-    let matching_doc_ids = matching_docs
-        .iter()
-        .take(expected_doc_count)
-        .map(|doc_addr| doc_mapper.get_doc_id(*doc_addr).unwrap().unwrap())
-        .collect::<BinaryHeap<_>>()
-        .into_sorted_vec();
-
-    let matching_docs = matching_doc_ids
-        .iter()
-        .map(|doc_id| doc_mapper.get_original_doc(*doc_id).unwrap())
-        .collect::<Vec<_>>();
-
-    assert_eq!(matching_docs.len(), expected_doc_count);
-    for (expected, matching_doc) in expected.iter().zip(matching_docs) {
-        assert_eq!(matching_doc.id(), expected.0);
-        assert_eq!(matching_doc.title(), expected.1);
-        assert_eq!(matching_doc.body(), expected.2.as_deref());
-    }
-}
 #[test]
 fn reverse_map_full_text_search_q1() {
     let config = Config::default();

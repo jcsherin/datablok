@@ -1,4 +1,5 @@
 use crate::common::Config;
+use crate::data_generator::title::TitleGenerator;
 use crate::error::Result;
 use datafusion::arrow::array::{ArrayRef, StringBuilder, UInt64Builder};
 use datafusion::arrow::datatypes::SchemaRef;
@@ -68,9 +69,9 @@ static DOCS_DATA_SOURCE: Lazy<Vec<Doc>> = Lazy::new(|| {
         ("A Dairy Cow".to_string(), Some("found".to_string())),
         ("The Diary of a Young Girl".to_string(), None),
     ]
-        .into_iter()
-        .map(|(title, body)| Doc::new(title, body))
-        .collect()
+    .into_iter()
+    .map(|(title, body)| Doc::new(title, body))
+    .collect()
 });
 
 pub fn tiny_docs() -> &'static [Doc] {
@@ -145,28 +146,44 @@ impl Deref for ArrowDocSchema {
     }
 }
 
+#[allow(dead_code)]
+const MAX_TITLE_SIZE: usize = 120;
+#[allow(dead_code)]
+const MAX_BODY_SIZE: usize = 80;
+#[allow(dead_code)]
+fn generate_record_batch(start_id: u64, size: usize, schema: SchemaRef) -> Result<RecordBatch> {
+    let mut id_builder = UInt64Builder::with_capacity(size);
+    let mut title_builder = StringBuilder::with_capacity(size, size * MAX_TITLE_SIZE);
+    let mut body_builder = StringBuilder::with_capacity(size, size * MAX_BODY_SIZE);
+
+    for (i, title) in (0..size).zip(TitleGenerator::default()) {
+        id_builder.append_value(start_id + i as u64);
+        title_builder.append_value(title);
+
+        if rand::random_bool(0.5) {
+            body_builder.append_value("This is a sample body text")
+        } else {
+            body_builder.append_null();
+        }
+    }
+
+    let id_array = Arc::new(id_builder.finish()) as ArrayRef;
+    let title_array = Arc::new(title_builder.finish()) as ArrayRef;
+    let body_array = Arc::new(body_builder.finish()) as ArrayRef;
+
+    RecordBatch::try_new(schema, vec![id_array, title_array, body_array]).map_err(Into::into)
+}
+
 pub fn generate_record_batch_for_docs(schema: SchemaRef, source: &[Doc]) -> Result<RecordBatch> {
-    let id_array: ArrayRef = Arc::new(
-        source
-            .iter()
-            .map(|doc| doc.id())
-            .collect::<UInt64Array>(),
-    );
+    let id_array: ArrayRef = Arc::new(source.iter().map(|doc| doc.id()).collect::<UInt64Array>());
     let title_array: ArrayRef = Arc::new(
         source
             .iter()
             .map(|doc| Some(doc.title()))
             .collect::<StringArray>(),
     );
-    let body_array: ArrayRef = Arc::new(
-        source
-            .iter()
-            .map(|doc| doc.body())
-            .collect::<StringArray>(),
-    );
+    let body_array: ArrayRef =
+        Arc::new(source.iter().map(|doc| doc.body()).collect::<StringArray>());
 
-    RecordBatch::try_new(
-        schema,
-        vec![id_array, title_array, body_array],
-    ).map_err(Into::into)
+    RecordBatch::try_new(schema, vec![id_array, title_array, body_array]).map_err(Into::into)
 }

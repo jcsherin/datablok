@@ -1,11 +1,10 @@
-use datafusion::arrow::array::UInt64Array;
 use datafusion::prelude::SessionContext;
-use datafusion_common::arrow::array::{ArrayRef, StringArray};
-use datafusion_common::arrow::record_batch::RecordBatch;
 use log::info;
 use parquet_embed_tantivy::common::{Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
-use parquet_embed_tantivy::doc::{generate_record_batch_for_docs, tiny_docs, ArrowDocSchema, DocTantivySchema};
+use parquet_embed_tantivy::doc::{
+    generate_record_batch_for_docs, tiny_docs, ArrowDocSchema, DocTantivySchema,
+};
 use parquet_embed_tantivy::error::Result;
 use parquet_embed_tantivy::index::{FullTextIndex, IndexBuilder};
 use parquet_embed_tantivy::writer::ParquetWriter;
@@ -73,54 +72,6 @@ async fn main() -> Result<()> {
     let mut writer = ParquetWriter::try_new(saved_path.clone(), arrow_docs_schema.clone(), None)?;
     writer.write_record_batch(&batch)?;
     writer.write_index_and_close(header, data_block)?;
-
-    // +-------------------------------------+
-    // | Read Offset from key_value_metadata |
-    // +-------------------------------------+
-
-    // let mut file = File::open(&saved_path)?;
-    //
-    // let reader = SerializedFileReader::new(file.try_clone()?)?;
-    // let meta = reader.metadata().file_metadata();
-    //
-    // let kvs = meta.key_value_metadata().ok_or_else(|| {
-    //     ParquetMetadata("Could not find key_value_metadata in FileMetadata".to_string())
-    // })?;
-    // let kv = kvs
-    //     .iter()
-    //     .find(|kv| kv.key == FULL_TEXT_INDEX_KEY)
-    //     .ok_or(ParquetMetadata(format!(
-    //         "Could not find key:{FULL_TEXT_INDEX_KEY} in key_value_metadata",
-    //     )))?;
-    // let full_text_index_offset = kv
-    //     .value
-    //     .as_deref()
-    //     .ok_or_else(|| ParquetError::General("Missing index offset".into()))?
-    //     .parse::<u64>()
-    //     .map_err(|e| ParquetError::General(e.to_string()))?;
-    // info!("Index {FULL_TEXT_INDEX_KEY} offset: {full_text_index_offset}");
-
-    // +------------------------------------------+
-    // | Read Full-Text Index Embedded In Parquet |
-    // +------------------------------------------+
-
-    // file.seek(SeekFrom::Start(full_text_index_offset))?;
-    // let index_header = Header::from_reader(&file)?;
-    //
-    // let mut data_block_buffer = vec![0u8; index_header.total_data_block_size as usize];
-    // file.read_exact(&mut data_block_buffer)?;
-    // let index_data = DataBlock::new(data_block_buffer);
-
-    // let index_dir = ReadOnlyArchiveDirectory::new(index_header, index_data);
-    //
-    // let read_only_index = Index::open_or_create(index_dir, schema.as_ref().clone())?;
-    // let index_wrapper = ImmutableIndex::new(read_only_index);
-    //
-    // let query_session = QuerySession::new(&index_wrapper)?;
-    // let doc_mapper = DocMapper::new(query_session.searcher(), &config, original_docs);
-    //
-    // info!(">>> Querying full-text index embedded within Parquet");
-    // run_search_queries(&query_session, &doc_mapper)?;
 
     let provider = Arc::new(FullTextIndex::try_open(
         &saved_path,
