@@ -1,7 +1,7 @@
 use parquet_embed_tantivy::common::{Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::header::Header;
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
-use parquet_embed_tantivy::doc::DocSchema;
+use parquet_embed_tantivy::doc::DocTantivySchema;
 use parquet_embed_tantivy::index::IndexBuilder;
 use std::sync::Arc;
 mod common;
@@ -9,7 +9,7 @@ mod common;
 #[test]
 fn roundtrip_custom_index_header() {
     let config = Config::default();
-    let schema = Arc::new(DocSchema::new(&config).into_schema());
+    let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
 
     let fields = SchemaFields::new(schema.clone(), &config).unwrap();
 

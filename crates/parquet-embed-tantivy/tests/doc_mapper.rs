@@ -6,7 +6,7 @@
 
 use crate::common::SOURCE_DATASET;
 use parquet_embed_tantivy::common::{Config, SchemaFields};
-use parquet_embed_tantivy::doc::{DocIdMapper, DocMapper, DocSchema};
+use parquet_embed_tantivy::doc::{DocIdMapper, DocMapper, DocTantivySchema};
 use parquet_embed_tantivy::error::Result;
 use parquet_embed_tantivy::index::{ImmutableIndex, IndexBuilder};
 use parquet_embed_tantivy::query::boolean_query::{
@@ -21,7 +21,7 @@ use tantivy::schema::Schema;
 mod common;
 
 fn setup_full_text_search_index(config: &Config) -> ImmutableIndex {
-    let schema = Arc::new(DocSchema::new(&config).into_schema());
+    let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
     let fields = SchemaFields::new(schema.clone(), &config).unwrap();
 
     IndexBuilder::new(schema.clone())

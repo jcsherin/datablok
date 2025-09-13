@@ -1,12 +1,11 @@
 use datafusion::arrow::array::UInt64Array;
 use datafusion::prelude::SessionContext;
 use datafusion_common::arrow::array::{ArrayRef, StringArray};
-use datafusion_common::arrow::datatypes::{DataType, Field, Schema};
 use datafusion_common::arrow::record_batch::RecordBatch;
 use log::info;
 use parquet_embed_tantivy::common::{Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
-use parquet_embed_tantivy::doc::{examples, DocSchema};
+use parquet_embed_tantivy::doc::{generate_record_batch_for_docs, tiny_docs, ArrowDocSchema, DocTantivySchema};
 use parquet_embed_tantivy::error::Result;
 use parquet_embed_tantivy::index::{FullTextIndex, IndexBuilder};
 use parquet_embed_tantivy::writer::ParquetWriter;
@@ -18,8 +17,8 @@ async fn main() -> Result<()> {
     setup_logging();
 
     let config = Config::default();
-    let schema = Arc::new(DocSchema::new(&config).into_schema());
-    let original_docs = examples();
+    let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
+    let original_docs = tiny_docs();
 
     let fields = SchemaFields::new(schema.clone(), &config)?;
 
@@ -66,39 +65,12 @@ async fn main() -> Result<()> {
     // index. The offset of the index is added to `FileMetadata.key_value_metadata`. The Parquet
     // file size is now larger because of the embedded full text index. This is backwards compatible
     // with readers who will skip the index embedded within the file.
-
-    let id_field = Field::new("id", DataType::UInt64, false);
-    let title_field = Field::new("title", DataType::Utf8, true);
-    let body_field = Field::new("body", DataType::Utf8, true);
-
-    let arrow_schema_ref = Arc::new(Schema::new(vec![id_field, title_field, body_field]));
-
-    let id_array: ArrayRef = Arc::new(
-        examples()
-            .iter()
-            .map(|doc| doc.id())
-            .collect::<UInt64Array>(),
-    );
-    let title_array: ArrayRef = Arc::new(
-        examples()
-            .iter()
-            .map(|doc| Some(doc.title()))
-            .collect::<StringArray>(),
-    );
-    let body_array: ArrayRef = Arc::new(
-        examples()
-            .iter()
-            .map(|doc| doc.body())
-            .collect::<StringArray>(),
-    );
-    let batch = RecordBatch::try_new(
-        arrow_schema_ref.clone(),
-        vec![id_array, title_array, body_array],
-    )?;
+    let arrow_docs_schema = ArrowDocSchema::default();
+    let batch = generate_record_batch_for_docs(arrow_docs_schema.clone(), tiny_docs())?;
 
     let saved_path = PathBuf::from("fat.parquet");
 
-    let mut writer = ParquetWriter::try_new(saved_path.clone(), arrow_schema_ref.clone(), None)?;
+    let mut writer = ParquetWriter::try_new(saved_path.clone(), arrow_docs_schema.clone(), None)?;
     writer.write_record_batch(&batch)?;
     writer.write_index_and_close(header, data_block)?;
 
@@ -153,7 +125,7 @@ async fn main() -> Result<()> {
     let provider = Arc::new(FullTextIndex::try_open(
         &saved_path,
         schema.clone(),
-        arrow_schema_ref.clone(),
+        arrow_docs_schema.clone(),
     )?);
     let ctx = SessionContext::new();
     ctx.register_table("t", provider)?;

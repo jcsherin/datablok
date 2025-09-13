@@ -1,8 +1,13 @@
 use crate::common::Config;
 use crate::error::Result;
+use datafusion::arrow::array::{ArrayRef, StringBuilder, UInt64Builder};
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion_common::arrow::array::{RecordBatch, StringArray, UInt64Array};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use tantivy::schema::{Field, Schema, SchemaBuilder, Value, INDEXED, STORED, TEXT};
 use tantivy::{DocAddress, Searcher, TantivyDocument};
 
@@ -38,8 +43,8 @@ impl Doc {
     }
 }
 
-pub struct DocSchema(Schema);
-impl DocSchema {
+pub struct DocTantivySchema(Schema);
+impl DocTantivySchema {
     pub fn new(config: &Config) -> Self {
         let mut schema_builder = SchemaBuilder::new();
 
@@ -55,7 +60,7 @@ impl DocSchema {
     }
 }
 
-static DOCS: Lazy<Vec<Doc>> = Lazy::new(|| {
+static DOCS_DATA_SOURCE: Lazy<Vec<Doc>> = Lazy::new(|| {
     vec![
         ("The Name of the Wind".to_string(), None),
         ("The Diary of Muadib".to_string(), None),
@@ -63,13 +68,13 @@ static DOCS: Lazy<Vec<Doc>> = Lazy::new(|| {
         ("A Dairy Cow".to_string(), Some("found".to_string())),
         ("The Diary of a Young Girl".to_string(), None),
     ]
-    .into_iter()
-    .map(|(title, body)| Doc::new(title, body))
-    .collect()
+        .into_iter()
+        .map(|(title, body)| Doc::new(title, body))
+        .collect()
 });
 
-pub fn examples() -> &'static [Doc] {
-    &DOCS
+pub fn tiny_docs() -> &'static [Doc] {
+    &DOCS_DATA_SOURCE
 }
 
 pub trait DocIdMapper<'a> {
@@ -112,4 +117,56 @@ impl<'a> DocIdMapper<'a> for DocMapper<'a> {
     fn get_original_doc(&self, doc_id: u64) -> Option<&'a Doc> {
         self.doc_map.get(&doc_id).copied()
     }
+}
+
+pub struct ArrowDocSchema(SchemaRef);
+
+impl Default for ArrowDocSchema {
+    fn default() -> Self {
+        use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+        let id_field = Field::new("id", DataType::UInt64, false);
+        let title_field = Field::new("title", DataType::Utf8, true);
+        let body_field = Field::new("body", DataType::Utf8, true);
+
+        ArrowDocSchema(std::sync::Arc::new(Schema::new(vec![
+            id_field,
+            title_field,
+            body_field,
+        ])))
+    }
+}
+
+impl Deref for ArrowDocSchema {
+    type Target = SchemaRef;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+pub fn generate_record_batch_for_docs(schema: SchemaRef, source: &[Doc]) -> Result<RecordBatch> {
+    let id_array: ArrayRef = Arc::new(
+        source
+            .iter()
+            .map(|doc| doc.id())
+            .collect::<UInt64Array>(),
+    );
+    let title_array: ArrayRef = Arc::new(
+        source
+            .iter()
+            .map(|doc| Some(doc.title()))
+            .collect::<StringArray>(),
+    );
+    let body_array: ArrayRef = Arc::new(
+        source
+            .iter()
+            .map(|doc| doc.body())
+            .collect::<StringArray>(),
+    );
+
+    RecordBatch::try_new(
+        schema,
+        vec![id_array, title_array, body_array],
+    ).map_err(Into::into)
 }
