@@ -1,5 +1,5 @@
 use datafusion::prelude::SessionContext;
-use log::info;
+use log::{info, trace};
 use parquet_embed_tantivy::common::{Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::doc::{
@@ -67,14 +67,19 @@ async fn main() -> Result<()> {
     let arrow_docs_schema = ArrowDocSchema::default();
     let batch = generate_record_batch_for_docs(arrow_docs_schema.clone(), tiny_docs())?;
 
-    let saved_path = PathBuf::from("fat.parquet");
+    let parquet_file_path = PathBuf::from("doc_with_full_text_index.parquet");
 
-    let mut writer = ParquetWriter::try_new(saved_path.clone(), arrow_docs_schema.clone(), None)?;
+    let mut writer =
+        ParquetWriter::try_new(parquet_file_path.clone(), arrow_docs_schema.clone(), None)?;
     writer.write_record_batch(&batch)?;
     writer.write_index_and_close(header, data_block)?;
+    trace!(
+        "Wrote file: {} with embedded full text index.",
+        parquet_file_path.display()
+    );
 
     let provider = Arc::new(FullTextIndex::try_open(
-        &saved_path,
+        &parquet_file_path,
         schema.clone(),
         arrow_docs_schema.clone(),
     )?);
@@ -93,6 +98,9 @@ async fn main() -> Result<()> {
     let result = df.to_string().await?;
 
     info!("\n{result}");
+
+    trace!("Deleting file: {}", parquet_file_path.display());
+    std::fs::remove_file(&parquet_file_path)?;
 
     Ok(())
 }
