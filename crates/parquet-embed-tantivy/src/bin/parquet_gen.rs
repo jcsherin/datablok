@@ -11,6 +11,7 @@ use parquet_embed_tantivy::doc::{ArrowDocSchema, Doc, DocTantivySchema};
 use parquet_embed_tantivy::error::Error::FieldNotFound;
 use parquet_embed_tantivy::error::Result;
 use parquet_embed_tantivy::index::{TantivyDocIndex, TantivyDocIndexBuilder};
+use parquet_embed_tantivy::paths::{docs_parquet_filename, DocFileType};
 use parquet_embed_tantivy::writer::ParquetWriter;
 use std::fs;
 use std::ops::Deref;
@@ -82,7 +83,7 @@ const RNG_SEED: u64 = 12345;
 
 fn create_parquet_file(
     output_directory: &Path,
-    filename: &str,
+    filename: &Path,
     schema: SchemaRef,
     record_batch_size: usize,
     data_source: impl Iterator<Item = Doc>,
@@ -142,27 +143,28 @@ fn main() -> Result<()> {
         trace!("query: {query:?}, count: {count}");
     }
 
-    // Create a normal Parquet file from input data source
-    let filename = format!("{}_{}.{}", "docs", args.target_size, "parquet");
-    trace!("Creating a regular parquet file: {filename}");
+    let filename_buf = docs_parquet_filename(DocFileType::Standard, args.target_size);
+    trace!(
+        "Creating a regular parquet file: {}",
+        filename_buf.display()
+    );
     create_parquet_file(
         args.output_directory.as_ref(),
-        filename.as_str(),
+        &filename_buf,
         ArrowDocSchema::default().deref().clone(),
         args.record_batch_size,
         get_data_source_iter(RNG_SEED, args.target_size),
         None,
     )?;
 
-    // Create a Parquet file with embedded full-text index
-    let filename = format!(
-        "{}_{}.{}",
-        "docs_with_fts_index", args.target_size, "parquet"
+    let filename_buf = docs_parquet_filename(DocFileType::WithIndex, args.target_size);
+    trace!(
+        "Creating a parquet file with embedded full-text index: {}",
+        filename_buf.display()
     );
-    trace!("Creating a parquet file with embedded full-text index: {filename}");
     create_parquet_file(
         args.output_directory.as_ref(),
-        filename.as_str(),
+        &filename_buf,
         ArrowDocSchema::default().deref().clone(),
         args.record_batch_size,
         get_data_source_iter(RNG_SEED, args.target_size),
