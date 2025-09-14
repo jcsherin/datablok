@@ -30,11 +30,8 @@ impl<'a> TantivyDocAddressResolver<'a> for DocAddressResolver<'a> {
     fn find_source_doc(&self, addr: DocAddress) -> Result<Option<&'a Doc>> {
         let id_field = self.searcher.schema().get_field("id").unwrap();
 
-        let id_value = self
-            .searcher
-            .doc::<TantivyDocument>(addr)?
-            .get_first(id_field)
-            .and_then(|v| v.as_u64());
+        let found_doc = self.searcher.doc::<TantivyDocument>(addr)?;
+        let id_value = found_doc.get_first(id_field).and_then(|v| v.as_u64());
 
         Ok(self
             .source_docs

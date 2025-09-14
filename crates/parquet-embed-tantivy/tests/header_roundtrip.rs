@@ -3,7 +3,6 @@ use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::doc::{tiny_docs, DocTantivySchema};
 use parquet_embed_tantivy::index::TantivyDocIndexBuilder;
 use std::sync::Arc;
-mod common;
 
 #[test]
 fn roundtrip_custom_index_header() {
