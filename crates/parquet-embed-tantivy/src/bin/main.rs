@@ -1,6 +1,5 @@
 use datafusion::prelude::SessionContext;
 use log::{info, trace};
-use parquet_embed_tantivy::common::{setup_logging, Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::data_generator::title::TitleGenerator;
 use parquet_embed_tantivy::doc::{
@@ -16,18 +15,10 @@ use std::sync::Arc;
 async fn main() -> Result<()> {
     setup_logging();
 
-    let config = Config::default();
-    let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
-    let original_docs = tiny_docs();
-
-    let fields = SchemaFields::new(schema.clone(), &config)?;
+    let schema = Arc::new(DocTantivySchema::new().into_schema());
 
     let index = TantivyDocIndexBuilder::new(schema.clone())
-        .index_and_commit(
-            config.index_writer_memory_budget_in_bytes,
-            &fields,
-            original_docs,
-        )?
+        .write_docs(tiny_docs())?
         .build();
 
     let (header, data_block) = DraftManifest::try_new(&index)?.try_into(&index)?;
@@ -66,7 +57,8 @@ async fn main() -> Result<()> {
     // file size is now larger because of the embedded full text index. This is backwards compatible
     // with readers who will skip the index embedded within the file.
     let arrow_docs_schema = ArrowDocSchema::default();
-    let batch = generate_record_batch_for_docs(arrow_docs_schema.clone(), tiny_docs())?;
+    let data_source = tiny_docs().collect::<Vec<_>>();
+    let batch = generate_record_batch_for_docs(arrow_docs_schema.clone(), &data_source)?;
 
     let parquet_file_path = PathBuf::from("doc_with_full_text_index.parquet");
 
@@ -112,4 +104,9 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Initializes the logger.
+fn setup_logging() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 }

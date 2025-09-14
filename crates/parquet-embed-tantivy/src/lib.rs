@@ -1,4 +1,3 @@
-pub mod common;
 pub mod custom_index;
 pub mod data_generator;
 pub mod directory;

@@ -4,7 +4,6 @@ use datafusion::arrow::datatypes::SchemaRef;
 use fs::create_dir_all;
 use itertools::Itertools;
 use log::trace;
-use parquet_embed_tantivy::common::{setup_logging, Config};
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::data_generator::title::TitleGenerator;
 use parquet_embed_tantivy::data_generator::words::SELECTIVITY_PHRASES;
@@ -49,19 +48,17 @@ fn get_data_source_iter(seed: u64, size: u64) -> impl Iterator<Item = Doc> {
 }
 
 fn create_tantivy_doc_index(docs: impl Iterator<Item = Doc>) -> Result<TantivyDocIndex> {
-    let config = Config::default();
-    let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
+    let schema = Arc::new(DocTantivySchema::new().into_schema());
 
     let index = TantivyDocIndexBuilder::new(schema.clone())
-        .write_docs(config.index_writer_memory_budget_in_bytes, docs)?
+        .write_docs(docs)?
         .build();
 
     Ok(index)
 }
 
 fn phrase_queries() -> Result<Vec<BooleanQuery>> {
-    let config = Config::default();
-    let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
+    let schema = Arc::new(DocTantivySchema::new().into_schema());
 
     let title_field = schema
         .get_field("title")
@@ -167,4 +164,9 @@ fn main() -> Result<()> {
         Some(&tantivy_doc_index),
     )?;
     Ok(())
+}
+
+/// Initializes the logger.
+fn setup_logging() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 }

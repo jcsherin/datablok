@@ -1,4 +1,3 @@
-use crate::common::SchemaFields;
 use crate::custom_index::data_block::DataBlock;
 use crate::custom_index::header::Header;
 use crate::directory::ReadOnlyArchiveDirectory;
@@ -30,7 +29,9 @@ use tantivy::collector::DocSetCollector;
 use tantivy::directory::ManagedDirectory;
 use tantivy::query::{PhraseQuery, Query};
 use tantivy::schema::{Schema, Value};
-use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term};
+use tantivy::{Index, IndexReader, TantivyDocument, Term};
+
+pub const INDEX_WRITER_MEMORY_BUDGET_IN_BYTES: usize = 50_000_000;
 
 pub struct TantivyDocIndexBuilder {
     index: Index,
@@ -43,12 +44,8 @@ impl TantivyDocIndexBuilder {
         }
     }
 
-    pub fn write_docs(
-        self,
-        memory_budget_in_bytes: usize,
-        docs: impl Iterator<Item = Doc>,
-    ) -> Result<Self> {
-        let mut writer = self.index.writer(memory_budget_in_bytes)?;
+    pub fn write_docs(self, docs: impl Iterator<Item = Doc>) -> Result<Self> {
+        let mut writer = self.index.writer(INDEX_WRITER_MEMORY_BUDGET_IN_BYTES)?;
         let schema = self.index.schema();
 
         let id_field = schema.get_field("id")?;
@@ -67,28 +64,6 @@ impl TantivyDocIndexBuilder {
 
         Ok(self)
     }
-
-    pub fn index_and_commit(
-        self,
-        memory_budget_in_bytes: usize,
-        fields: &SchemaFields,
-        docs: &[Doc],
-    ) -> Result<Self> {
-        let mut index_writer: IndexWriter = self.index.writer(memory_budget_in_bytes)?;
-
-        for doc in docs {
-            let mut tantivy_doc = TantivyDocument::default();
-            tantivy_doc.add_u64(fields.id, doc.id());
-            tantivy_doc.add_text(fields.title, doc.title());
-
-            index_writer.add_document(tantivy_doc)?;
-        }
-
-        index_writer.commit()?;
-
-        Ok(self)
-    }
-
     pub fn build(self) -> TantivyDocIndex {
         TantivyDocIndex::new(self.index)
     }

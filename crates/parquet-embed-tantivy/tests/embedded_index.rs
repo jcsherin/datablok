@@ -1,13 +1,11 @@
-use crate::common::{assert_search_result_matches_source_data, create_test_docs};
 use parquet::errors::ParquetError;
 use parquet::file::reader::{FileReader, SerializedFileReader};
-use parquet_embed_tantivy::common::{Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::data_block::DataBlock;
 use parquet_embed_tantivy::custom_index::header::Header;
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::directory::ReadOnlyArchiveDirectory;
 use parquet_embed_tantivy::doc::{
-    generate_record_batch_for_docs, ArrowDocSchema, DocTantivySchema,
+    generate_record_batch_for_docs, tiny_docs, ArrowDocSchema, DocTantivySchema,
 };
 use parquet_embed_tantivy::error::Error::ParquetMetadata;
 use parquet_embed_tantivy::index::{TantivyDocIndex, TantivyDocIndexBuilder, FULL_TEXT_INDEX_KEY};
@@ -23,20 +21,13 @@ use tantivy::Index;
 use tempfile::Builder;
 
 mod common;
+
 #[test]
 fn test_embedded_full_text_index() {
-    let config = Config::default();
-    let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
-    let fields = SchemaFields::new(schema.clone(), &config).unwrap();
-
-    let source_dataset = create_test_docs();
+    let schema = Arc::new(DocTantivySchema::new().into_schema());
 
     let index = TantivyDocIndexBuilder::new(schema.clone())
-        .index_and_commit(
-            config.index_writer_memory_budget_in_bytes,
-            &fields,
-            source_dataset,
-        )
+        .write_docs(tiny_docs())
         .unwrap()
         .build();
 
@@ -46,7 +37,8 @@ fn test_embedded_full_text_index() {
         .unwrap();
 
     let arrow_docs_schema = ArrowDocSchema::default();
-    let batch = generate_record_batch_for_docs(arrow_docs_schema.clone(), source_dataset).unwrap();
+    let data_source = tiny_docs().collect::<Vec<_>>();
+    let batch = generate_record_batch_for_docs(arrow_docs_schema.clone(), &data_source).unwrap();
 
     let temp_dir = Builder::new()
         .prefix("test_embedded_full_text_index")
@@ -106,16 +98,14 @@ fn test_embedded_full_text_index() {
     let read_only_index = Index::open_or_create(index_dir, schema.as_ref().clone()).unwrap();
     let index_wrapper = TantivyDocIndex::new(read_only_index);
 
-    assert_search_result_matches_source_data(
+    common::assert_search_result_matches_source_data(
         &index_wrapper,
-        &config,
         &[(1, "The Diary of Muadib".to_string(), None)],
         |schema| title_contains_diary_and_not_girl(schema),
     );
 
-    assert_search_result_matches_source_data(
+    common::assert_search_result_matches_source_data(
         &index,
-        &config,
         &[
             (1, "The Diary of Muadib".to_string(), None),
             (2, "A Dairy Cow".to_string(), Some("hidden".to_string())),
@@ -125,9 +115,8 @@ fn test_embedded_full_text_index() {
         |schema| title_contains_diary_or_cow(schema),
     );
 
-    assert_search_result_matches_source_data(
+    common::assert_search_result_matches_source_data(
         &index,
-        &config,
         &[
             (1, "The Diary of Muadib".to_string(), None),
             (2, "A Dairy Cow".to_string(), Some("hidden".to_string())),

@@ -4,38 +4,30 @@
 //! In the application, the search results from the full-text index are mapped to rows within a
 //! Parquet file.
 
-use crate::common::{assert_search_result_matches_source_data, SOURCE_DATASET};
-use parquet_embed_tantivy::common::{Config, SchemaFields};
-use parquet_embed_tantivy::doc::DocTantivySchema;
+mod common;
+
+use parquet_embed_tantivy::doc::{tiny_docs, DocTantivySchema};
 use parquet_embed_tantivy::index::{TantivyDocIndex, TantivyDocIndexBuilder};
 use parquet_embed_tantivy::query::boolean_query::{
     combine_term_and_phrase_query, title_contains_diary_and_not_girl, title_contains_diary_or_cow,
 };
 use std::sync::Arc;
-mod common;
 
-fn setup_full_text_search_index(config: &Config) -> TantivyDocIndex {
-    let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
-    let fields = SchemaFields::new(schema.clone(), &config).unwrap();
+fn setup_full_text_search_index() -> TantivyDocIndex {
+    let schema = Arc::new(DocTantivySchema::new().into_schema());
 
     TantivyDocIndexBuilder::new(schema.clone())
-        .index_and_commit(
-            config.index_writer_memory_budget_in_bytes,
-            &fields,
-            &SOURCE_DATASET,
-        )
+        .write_docs(tiny_docs())
         .unwrap()
         .build()
 }
 
 #[test]
 fn reverse_map_full_text_search_q1() {
-    let config = Config::default();
-    let index = setup_full_text_search_index(&config);
+    let index = setup_full_text_search_index();
 
-    assert_search_result_matches_source_data(
+    common::assert_search_result_matches_source_data(
         &index,
-        &config,
         &[(1, "The Diary of Muadib".to_string(), None)],
         |schema| title_contains_diary_and_not_girl(schema),
     );
@@ -43,12 +35,10 @@ fn reverse_map_full_text_search_q1() {
 
 #[test]
 fn reverse_map_full_text_search_q2() {
-    let config = Config::default();
-    let index = setup_full_text_search_index(&config);
+    let index = setup_full_text_search_index();
 
-    assert_search_result_matches_source_data(
+    common::assert_search_result_matches_source_data(
         &index,
-        &config,
         &[
             (1, "The Diary of Muadib".to_string(), None),
             (2, "A Dairy Cow".to_string(), Some("hidden".to_string())),
@@ -61,12 +51,10 @@ fn reverse_map_full_text_search_q2() {
 
 #[test]
 fn reverse_map_full_text_search_q3() {
-    let config = Config::default();
-    let index = setup_full_text_search_index(&config);
+    let index = setup_full_text_search_index();
 
-    assert_search_result_matches_source_data(
+    common::assert_search_result_matches_source_data(
         &index,
-        &config,
         &[
             (1, "The Diary of Muadib".to_string(), None),
             (2, "A Dairy Cow".to_string(), Some("hidden".to_string())),

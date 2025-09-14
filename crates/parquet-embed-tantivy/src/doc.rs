@@ -1,10 +1,8 @@
-use crate::common::Config;
 use crate::data_generator::title::TitleGenerator;
 use crate::error::Result;
 use datafusion::arrow::array::{ArrayRef, StringBuilder, UInt64Builder};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion_common::arrow::array::{RecordBatch, StringArray, UInt64Array};
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -31,13 +29,14 @@ impl Doc {
     }
 }
 
+#[derive(Debug)]
 pub struct DocTantivySchema(Schema);
 impl DocTantivySchema {
-    pub fn new(config: &Config) -> Self {
+    pub fn new() -> Self {
         let mut schema_builder = SchemaBuilder::new();
 
-        schema_builder.add_u64_field(config.id_field_name.as_str(), INDEXED | STORED);
-        schema_builder.add_text_field(config.title_field_name.as_str(), TEXT);
+        schema_builder.add_u64_field("id", INDEXED | STORED);
+        schema_builder.add_text_field("title", TEXT);
 
         Self(schema_builder.build())
     }
@@ -47,7 +46,13 @@ impl DocTantivySchema {
     }
 }
 
-static DOCS_DATA_SOURCE: Lazy<Vec<Doc>> = Lazy::new(|| {
+impl Default for DocTantivySchema {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn tiny_docs() -> impl Iterator<Item = Doc> {
     let docs = vec![
         "The Name of the Wind".to_string(),
         "The Diary of Muadib".to_string(),
@@ -59,11 +64,6 @@ static DOCS_DATA_SOURCE: Lazy<Vec<Doc>> = Lazy::new(|| {
     (0..docs.len())
         .zip(docs)
         .map(|(id, title)| Doc::new(id as u64, title))
-        .collect()
-});
-
-pub fn tiny_docs() -> &'static [Doc] {
-    &DOCS_DATA_SOURCE
 }
 
 pub trait DocIdMapper<'a> {
@@ -79,11 +79,8 @@ pub struct DocMapper<'a> {
 }
 
 impl<'a> DocMapper<'a> {
-    pub fn new(searcher: &'a Searcher, config: &Config, docs: &'a [Doc]) -> Self {
-        let id_field = searcher
-            .schema()
-            .get_field(config.id_field_name.as_str())
-            .unwrap();
+    pub fn new(searcher: &'a Searcher, docs: &'a [Doc]) -> Self {
+        let id_field = searcher.schema().get_field("id").unwrap();
         let doc_map: HashMap<u64, &Doc> = docs.iter().map(|doc| (doc.id(), doc)).collect();
 
         Self {

@@ -1,24 +1,16 @@
-use parquet_embed_tantivy::common::{Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::header::Header;
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
-use parquet_embed_tantivy::doc::DocTantivySchema;
+use parquet_embed_tantivy::doc::{tiny_docs, DocTantivySchema};
 use parquet_embed_tantivy::index::TantivyDocIndexBuilder;
 use std::sync::Arc;
 mod common;
 
 #[test]
 fn roundtrip_custom_index_header() {
-    let config = Config::default();
-    let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
-
-    let fields = SchemaFields::new(schema.clone(), &config).unwrap();
+    let schema = Arc::new(DocTantivySchema::new().into_schema());
 
     let index = TantivyDocIndexBuilder::new(schema.clone())
-        .index_and_commit(
-            config.index_writer_memory_budget_in_bytes,
-            &fields,
-            &common::SOURCE_DATASET,
-        )
+        .write_docs(tiny_docs())
         .unwrap()
         .build();
 
