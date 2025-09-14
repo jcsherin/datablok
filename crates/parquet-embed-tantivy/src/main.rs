@@ -103,9 +103,10 @@ async fn main() -> Result<()> {
     trace!("Deleting file: {}", parquet_file_path.display());
     std::fs::remove_file(&parquet_file_path)?;
 
-    for (x, y) in TitleGenerator::new()
+    const RNG_SEED: u64 = 123;
+    for (x, y) in TitleGenerator::new(RNG_SEED)
         .take(10)
-        .zip(TitleGenerator::new().take(10))
+        .zip(TitleGenerator::new(RNG_SEED).take(10))
     {
         trace!("{x}, {y}")
     }

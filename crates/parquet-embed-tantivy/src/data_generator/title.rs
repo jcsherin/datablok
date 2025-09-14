@@ -9,15 +9,15 @@ pub struct TitleGenerator {
 
 impl Default for TitleGenerator {
     fn default() -> Self {
-        Self {
-            rng: StdRng::seed_from_u64(0),
-        }
+        Self::new(0)
     }
 }
 
 impl TitleGenerator {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(seed: u64) -> Self {
+        Self {
+            rng: StdRng::seed_from_u64(seed),
+        }
     }
 }
 
@@ -47,5 +47,18 @@ impl Iterator for TitleGenerator {
         title_parts.shuffle(&mut self.rng);
 
         Some(title_parts.join(" "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::data_generator::title::TitleGenerator;
+
+    #[test]
+    fn test_reproducible_with_seed() {
+        let iter1 = TitleGenerator::new(0).take(1000);
+        let iter2 = TitleGenerator::new(0).take(1000);
+
+        iter1.zip(iter2).for_each(|(a, b)| assert_eq!(a, b));
     }
 }

@@ -42,9 +42,9 @@ struct Args {
     output_directory: PathBuf,
 }
 
-fn get_data_source_iter(size: u64) -> impl Iterator<Item = Doc> {
+fn get_data_source_iter(seed: u64, size: u64) -> impl Iterator<Item = Doc> {
     (0..size)
-        .zip(TitleGenerator::new())
+        .zip(TitleGenerator::new(seed))
         .map(|(id, title)| Doc::new(id, title))
 }
 
@@ -81,6 +81,8 @@ fn phrase_queries() -> Result<Vec<BooleanQuery>> {
 }
 
 const MAX_TITLE_SIZE: usize = 120;
+const RNG_SEED: u64 = 12345;
+
 fn create_parquet_file(
     output_directory: &Path,
     filename: &str,
@@ -130,7 +132,8 @@ fn main() -> Result<()> {
 
     // Tantivy Full-Text Index
     trace!("Creating: full-text index");
-    let tantivy_doc_index = create_tantivy_doc_index(get_data_source_iter(args.target_size))?;
+    let tantivy_doc_index =
+        create_tantivy_doc_index(get_data_source_iter(RNG_SEED, args.target_size))?;
 
     let reader = tantivy_doc_index.reader()?;
     let searcher = reader.searcher();
@@ -149,7 +152,7 @@ fn main() -> Result<()> {
         "titles.parquet",
         ArrowDocSchema::default().deref().clone(),
         args.record_batch_size,
-        get_data_source_iter(args.target_size),
+        get_data_source_iter(RNG_SEED, args.target_size),
         None,
     )?;
 
@@ -160,7 +163,7 @@ fn main() -> Result<()> {
         "titles_with_fts_index.parquet",
         ArrowDocSchema::default().deref().clone(),
         args.record_batch_size,
-        get_data_source_iter(args.target_size),
+        get_data_source_iter(RNG_SEED, args.target_size),
         Some(&tantivy_doc_index),
     )?;
     Ok(())
