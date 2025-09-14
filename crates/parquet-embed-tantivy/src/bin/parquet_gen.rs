@@ -5,6 +5,7 @@ use fs::create_dir_all;
 use itertools::Itertools;
 use log::trace;
 use parquet_embed_tantivy::common::{setup_logging, Config};
+use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::data_generator::title::TitleGenerator;
 use parquet_embed_tantivy::data_generator::words::SELECTIVITY_PHRASES;
 use parquet_embed_tantivy::doc::{ArrowDocSchema, Doc, DocTantivySchema};
@@ -86,13 +87,13 @@ fn create_parquet_file(
     schema: SchemaRef,
     record_batch_size: usize,
     data_source: impl Iterator<Item = Doc>,
+    tantivy_doc_index: Option<&TantivyDocIndex>,
 ) -> Result<()> {
     if !output_directory.exists() {
         create_dir_all(output_directory)?;
     }
     let output_path = output_directory.join(filename);
 
-    trace!("Writing parquet file to: {}", output_path.display());
     let mut writer = ParquetWriter::try_new(output_path, schema.clone(), None)?;
 
     let mut id_builder = UInt64Builder::with_capacity(record_batch_size);
@@ -112,7 +113,13 @@ fn create_parquet_file(
         writer.write_record_batch(&batch)?
     }
 
-    writer.close()?;
+    if let Some(index) = tantivy_doc_index {
+        let (header, data_block) = DraftManifest::try_new(index)?.try_into(index)?;
+        writer.write_index_and_close(header, data_block)?;
+    } else {
+        writer.close()?;
+    }
+
     Ok(())
 }
 
@@ -124,7 +131,6 @@ fn main() -> Result<()> {
     // Tantivy Full-Text Index
     trace!("Creating: full-text index");
     let tantivy_doc_index = create_tantivy_doc_index(get_data_source_iter(args.target_size))?;
-    trace!("Finished: full-text index");
 
     let reader = tantivy_doc_index.reader()?;
     let searcher = reader.searcher();
@@ -144,8 +150,18 @@ fn main() -> Result<()> {
         ArrowDocSchema::default().deref().clone(),
         args.record_batch_size,
         get_data_source_iter(args.target_size),
+        None,
     )?;
-    trace!("Finished: regular parquet file");
 
+    // Create a Parquet file with embedded full-text index
+    trace!("Creating a parquet file with embedded full-text index");
+    create_parquet_file(
+        args.output_directory.as_ref(),
+        "titles_with_fts_index.parquet",
+        ArrowDocSchema::default().deref().clone(),
+        args.record_batch_size,
+        get_data_source_iter(args.target_size),
+        Some(&tantivy_doc_index),
+    )?;
     Ok(())
 }

@@ -40,6 +40,8 @@ impl ParquetWriter {
     pub fn close(mut self) -> Result<()> {
         self.writer.flush()?;
         self.writer.close()?;
+        trace!("Wrote Parquet file to: {}", self.path.display());
+
         Ok(())
     }
 
