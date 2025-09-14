@@ -3,11 +3,9 @@ use crate::error::Result;
 use datafusion::arrow::array::{ArrayRef, StringBuilder, UInt64Builder};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion_common::arrow::array::{RecordBatch, StringArray, UInt64Array};
-use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
-use tantivy::schema::{Field, Schema, SchemaBuilder, Value, INDEXED, STORED, TEXT};
-use tantivy::{DocAddress, Searcher, TantivyDocument};
+use tantivy::schema::{Schema, SchemaBuilder, INDEXED, STORED, TEXT};
 
 #[derive(Debug, PartialEq)]
 pub struct Doc {
@@ -64,45 +62,6 @@ pub fn tiny_docs() -> impl Iterator<Item = Doc> {
     (0..docs.len())
         .zip(docs)
         .map(|(id, title)| Doc::new(id as u64, title))
-}
-
-pub trait DocIdMapper<'a> {
-    fn get_doc_id(&self, doc_address: DocAddress) -> Result<Option<u64>>;
-
-    fn get_original_doc(&self, doc_id: u64) -> Option<&'a Doc>;
-}
-
-pub struct DocMapper<'a> {
-    searcher: &'a Searcher,
-    id_field: Field,
-    doc_map: HashMap<u64, &'a Doc>,
-}
-
-impl<'a> DocMapper<'a> {
-    pub fn new(searcher: &'a Searcher, docs: &'a [Doc]) -> Self {
-        let id_field = searcher.schema().get_field("id").unwrap();
-        let doc_map: HashMap<u64, &Doc> = docs.iter().map(|doc| (doc.id(), doc)).collect();
-
-        Self {
-            searcher,
-            id_field,
-            doc_map,
-        }
-    }
-}
-
-impl<'a> DocIdMapper<'a> for DocMapper<'a> {
-    fn get_doc_id(&self, doc_address: DocAddress) -> Result<Option<u64>> {
-        Ok(self
-            .searcher
-            .doc::<TantivyDocument>(doc_address)?
-            .get_first(self.id_field)
-            .and_then(|v| v.as_u64()))
-    }
-
-    fn get_original_doc(&self, doc_id: u64) -> Option<&'a Doc> {
-        self.doc_map.get(&doc_id).copied()
-    }
 }
 
 pub struct ArrowDocSchema(SchemaRef);

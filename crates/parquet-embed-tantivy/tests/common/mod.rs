@@ -1,11 +1,47 @@
-use parquet_embed_tantivy::doc::{tiny_docs, DocIdMapper, DocMapper};
+use itertools::Itertools;
+use parquet_embed_tantivy::doc::{tiny_docs, Doc};
 use parquet_embed_tantivy::error::Result;
 use parquet_embed_tantivy::index::TantivyDocIndex;
 use parquet_embed_tantivy::query_session::QuerySession;
-use std::collections::BinaryHeap;
 use tantivy::collector::{Count, DocSetCollector};
 use tantivy::query::BooleanQuery;
-use tantivy::schema::Schema;
+use tantivy::schema::{Schema, Value};
+use tantivy::{DocAddress, Searcher, TantivyDocument};
+
+trait TantivyDocAddressResolver<'a> {
+    fn find_source_doc(&self, addr: DocAddress) -> Result<Option<&'a Doc>>;
+}
+
+struct DocAddressResolver<'a> {
+    searcher: &'a Searcher,
+    source_docs: &'a [Doc],
+}
+
+impl<'a> DocAddressResolver<'a> {
+    fn new(searcher: &'a Searcher, source_docs: &'a [Doc]) -> Self {
+        Self {
+            searcher,
+            source_docs,
+        }
+    }
+}
+
+impl<'a> TantivyDocAddressResolver<'a> for DocAddressResolver<'a> {
+    fn find_source_doc(&self, addr: DocAddress) -> Result<Option<&'a Doc>> {
+        let id_field = self.searcher.schema().get_field("id").unwrap();
+
+        let id_value = self
+            .searcher
+            .doc::<TantivyDocument>(addr)?
+            .get_first(id_field)
+            .and_then(|v| v.as_u64());
+
+        Ok(self
+            .source_docs
+            .iter()
+            .find(|doc| Some(doc.id()) == id_value))
+    }
+}
 
 #[allow(dead_code)]
 pub fn assert_search_result_matches_source_data(
@@ -24,18 +60,18 @@ pub fn assert_search_result_matches_source_data(
     assert_eq!(doc_count, expected_doc_count);
 
     let data_source = tiny_docs().collect::<Vec<_>>();
-    let doc_mapper = DocMapper::new(query_session.searcher(), &data_source);
+    let doc_address_resolver = DocAddressResolver::new(query_session.searcher(), &data_source);
 
-    let matching_doc_ids = matching_docs
+    let matching_docs = matching_docs
         .iter()
         .take(expected_doc_count)
-        .map(|doc_addr| doc_mapper.get_doc_id(*doc_addr).unwrap().unwrap())
-        .collect::<BinaryHeap<_>>()
-        .into_sorted_vec();
-
-    let matching_docs = matching_doc_ids
-        .iter()
-        .map(|doc_id| doc_mapper.get_original_doc(*doc_id).unwrap())
+        .map(|addr| {
+            doc_address_resolver
+                .find_source_doc(*addr)
+                .unwrap()
+                .unwrap()
+        })
+        .sorted_by_key(|doc| doc.id())
         .collect::<Vec<_>>();
 
     assert_eq!(matching_docs.len(), expected_doc_count);
