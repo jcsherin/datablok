@@ -43,6 +43,31 @@ impl TantivyDocIndexBuilder {
         }
     }
 
+    pub fn write_docs(
+        self,
+        memory_budget_in_bytes: usize,
+        docs: impl Iterator<Item = Doc>,
+    ) -> Result<Self> {
+        let mut writer = self.index.writer(memory_budget_in_bytes)?;
+        let schema = self.index.schema();
+
+        let id_field = schema.get_field("id")?;
+        let title_field = schema.get_field("title")?;
+
+        for doc in docs {
+            let mut item = TantivyDocument::default();
+
+            item.add_u64(id_field, doc.id());
+            item.add_text(title_field, doc.title());
+
+            writer.add_document(item)?;
+        }
+
+        writer.commit()?;
+
+        Ok(self)
+    }
+
     pub fn index_and_commit(
         self,
         memory_budget_in_bytes: usize,

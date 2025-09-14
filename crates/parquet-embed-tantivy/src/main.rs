@@ -2,6 +2,7 @@ use datafusion::prelude::SessionContext;
 use log::{info, trace};
 use parquet_embed_tantivy::common::{setup_logging, Config, SchemaFields};
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
+use parquet_embed_tantivy::data_generator::title::TitleGenerator;
 use parquet_embed_tantivy::doc::{
     generate_record_batch_for_docs, tiny_docs, ArrowDocSchema, DocTantivySchema,
 };
@@ -101,6 +102,13 @@ async fn main() -> Result<()> {
 
     trace!("Deleting file: {}", parquet_file_path.display());
     std::fs::remove_file(&parquet_file_path)?;
+
+    for (x, y) in TitleGenerator::new()
+        .take(10)
+        .zip(TitleGenerator::new().take(10))
+    {
+        trace!("{x}, {y}")
+    }
 
     Ok(())
 }

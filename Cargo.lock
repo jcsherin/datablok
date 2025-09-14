@@ -2924,6 +2924,7 @@ dependencies = [
  "datafusion-expr 48.0.1",
  "datafusion-physical-plan 48.0.1",
  "env_logger",
+ "itertools 0.14.0",
  "log",
  "once_cell",
  "parquet",

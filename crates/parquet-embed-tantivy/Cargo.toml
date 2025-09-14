@@ -26,6 +26,7 @@ datafusion = { version = "48.0.1", default-features = false }
 tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
 rand = "0.9.2"
 clap = { version = "4.5.37", features = ["derive"] }
+itertools = "0.14.0"
 
 [dev-dependencies]
 tempfile = "3.10.1"

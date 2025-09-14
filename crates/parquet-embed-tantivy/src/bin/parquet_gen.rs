@@ -2,8 +2,9 @@ use clap::Parser;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, UInt64Builder};
 use datafusion::arrow::datatypes::SchemaRef;
 use fs::create_dir_all;
+use itertools::Itertools;
 use log::trace;
-use parquet_embed_tantivy::common::{setup_logging, Config, SchemaFields};
+use parquet_embed_tantivy::common::{setup_logging, Config};
 use parquet_embed_tantivy::data_generator::title::TitleGenerator;
 use parquet_embed_tantivy::data_generator::words::SELECTIVITY_PHRASES;
 use parquet_embed_tantivy::doc::{ArrowDocSchema, Doc, DocTantivySchema};
@@ -40,21 +41,18 @@ struct Args {
     output_directory: PathBuf,
 }
 
-fn create_data_source(size: u64) -> Vec<Doc> {
+fn get_data_source_iter(size: u64) -> impl Iterator<Item = Doc> {
     (0..size)
         .zip(TitleGenerator::new())
         .map(|(id, title)| Doc::new(id, title))
-        .collect()
 }
 
-fn create_tantivy_doc_index(docs: &[Doc]) -> Result<TantivyDocIndex> {
+fn create_tantivy_doc_index(docs: impl Iterator<Item = Doc>) -> Result<TantivyDocIndex> {
     let config = Config::default();
     let schema = Arc::new(DocTantivySchema::new(&config).into_schema());
 
-    let fields = SchemaFields::new(schema.clone(), &config)?;
-
     let index = TantivyDocIndexBuilder::new(schema.clone())
-        .index_and_commit(config.index_writer_memory_budget_in_bytes, &fields, docs)?
+        .write_docs(config.index_writer_memory_budget_in_bytes, docs)?
         .build();
 
     Ok(index)
@@ -87,7 +85,7 @@ fn create_parquet_file(
     filename: &str,
     schema: SchemaRef,
     record_batch_size: usize,
-    data_source: &[Doc],
+    data_source: impl Iterator<Item = Doc>,
 ) -> Result<()> {
     if !output_directory.exists() {
         create_dir_all(output_directory)?;
@@ -97,17 +95,15 @@ fn create_parquet_file(
     trace!("Writing parquet file to: {}", output_path.display());
     let mut writer = ParquetWriter::try_new(output_path, schema.clone(), None)?;
 
-    for chunk in data_source.chunks(record_batch_size) {
-        let chunk_size = chunk.len();
+    let mut id_builder = UInt64Builder::with_capacity(record_batch_size);
+    let mut title_builder =
+        StringBuilder::with_capacity(record_batch_size, record_batch_size * MAX_TITLE_SIZE);
 
-        let mut id_builder = UInt64Builder::with_capacity(chunk_size);
-        let mut title_builder =
-            StringBuilder::with_capacity(chunk_size, chunk_size * MAX_TITLE_SIZE);
-
-        chunk.iter().for_each(|doc| {
+    for chunk in &data_source.chunks(record_batch_size) {
+        for doc in chunk {
             id_builder.append_value(doc.id());
             title_builder.append_value(doc.title());
-        });
+        }
 
         let id_array = Arc::new(id_builder.finish()) as ArrayRef;
         let title_array = Arc::new(title_builder.finish()) as ArrayRef;
@@ -125,28 +121,31 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let data_source = create_data_source(args.target_size);
-
     // Tantivy Full-Text Index
-    let tantivy_doc_index = create_tantivy_doc_index(&data_source)?;
+    trace!("Creating: full-text index");
+    let tantivy_doc_index = create_tantivy_doc_index(get_data_source_iter(args.target_size))?;
+    trace!("Finished: full-text index");
 
     let reader = tantivy_doc_index.reader()?;
     let searcher = reader.searcher();
 
     // How many times do the control terms occur?
+    trace!("Histogram of control search phrases");
     for query in phrase_queries()? {
         let count = searcher.search(&query, &tantivy::collector::Count)?;
         trace!("query: {query:?}, count: {count}");
     }
 
     // Create a normal Parquet file from input data source
+    trace!("Creating a regular parquet file");
     create_parquet_file(
         args.output_directory.as_ref(),
         "titles.parquet",
         ArrowDocSchema::default().deref().clone(),
         args.record_batch_size,
-        &data_source,
+        get_data_source_iter(args.target_size),
     )?;
+    trace!("Finished: regular parquet file");
 
     Ok(())
 }
