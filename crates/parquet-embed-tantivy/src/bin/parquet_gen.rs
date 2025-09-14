@@ -143,10 +143,11 @@ fn main() -> Result<()> {
     }
 
     // Create a normal Parquet file from input data source
-    trace!("Creating a regular parquet file");
+    let filename = format!("{}_{}.{}", "docs", args.target_size, "parquet");
+    trace!("Creating a regular parquet file: {filename}");
     create_parquet_file(
         args.output_directory.as_ref(),
-        "titles.parquet",
+        filename.as_str(),
         ArrowDocSchema::default().deref().clone(),
         args.record_batch_size,
         get_data_source_iter(RNG_SEED, args.target_size),
@@ -154,10 +155,14 @@ fn main() -> Result<()> {
     )?;
 
     // Create a Parquet file with embedded full-text index
-    trace!("Creating a parquet file with embedded full-text index");
+    let filename = format!(
+        "{}_{}.{}",
+        "docs_with_fts_index", args.target_size, "parquet"
+    );
+    trace!("Creating a parquet file with embedded full-text index: {filename}");
     create_parquet_file(
         args.output_directory.as_ref(),
-        "titles_with_fts_index.parquet",
+        filename.as_str(),
         ArrowDocSchema::default().deref().clone(),
         args.record_batch_size,
         get_data_source_iter(RNG_SEED, args.target_size),
