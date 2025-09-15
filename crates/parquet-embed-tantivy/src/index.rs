@@ -16,7 +16,7 @@ use datafusion_datasource_parquet::source::ParquetSource;
 use datafusion_execution::object_store::ObjectStoreUrl;
 use datafusion_expr::{col, lit, Expr, TableProviderFilterPushDown, TableType};
 use datafusion_physical_plan::ExecutionPlan;
-use log::info;
+use log::trace;
 use parquet::errors::ParquetError;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use std::any::Any;
@@ -197,6 +197,9 @@ impl TableProvider for FullTextIndex {
     ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
         let mut phrase: Option<&str> = None;
 
+        trace!("Projection: {:?}", _projection);
+        trace!("Filters: {:?}", filters);
+        trace!("Limit: {:?}", _limit);
         // Currently handles only a single wildcard LIKE query on the `title` column. A generalized
         // implementation will use: [`PruningPredicate`]
         //
@@ -209,7 +212,7 @@ impl TableProvider for FullTextIndex {
                         Expr::Literal(ScalarValue::Utf8(Some(pattern)), None),
                     ) = (&*like.expr, &*like.pattern)
                     {
-                        info!("Column: {}, Pattern: {pattern}", col.name);
+                        trace!("Column: {}, Pattern: {pattern}", col.name);
                         if col.name == "title" {
                             if let Some(inner) =
                                 pattern.strip_prefix('%').and_then(|s| s.strip_suffix('%'))
@@ -224,7 +227,7 @@ impl TableProvider for FullTextIndex {
 
         let mut matching_doc_ids = Vec::new();
         if let Some(inner) = phrase {
-            info!("phrase: {inner}");
+            trace!("phrase: {inner}");
 
             let title_field = self
                 .index_schema
@@ -263,17 +266,17 @@ impl TableProvider for FullTextIndex {
             }
         }
 
-        info!("Matching doc ids from full-text index: {matching_doc_ids:?}");
+        trace!("Matching doc ids from full-text index: {matching_doc_ids:?}");
 
         // constructing the `id IN (...)` expression to pushdown into parquet file
         let ids: Vec<Expr> = matching_doc_ids.iter().map(|doc_id| lit(*doc_id)).collect();
         let id_filter = col("id").in_list(ids, false);
-        info!("filter expr: {id_filter}");
+        trace!("filter expr: {id_filter}");
 
         let df_schema = DFSchema::try_from(self.arrow_schema.clone())?;
         let physical_predicate =
             create_physical_expr(&id_filter, &df_schema, state.execution_props())?;
-        info!("physical expr: {physical_predicate}");
+        trace!("physical expr: {physical_predicate}");
 
         let object_store_url = ObjectStoreUrl::local_filesystem();
         let source = Arc::new(

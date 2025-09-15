@@ -1,6 +1,8 @@
 use clap::Parser;
 use datafusion::prelude::{ParquetReadOptions, SessionContext};
-use log::{info, trace};
+use itertools::Itertools;
+use log::info;
+use parquet_embed_tantivy::data_generator::words::SELECTIVITY_PHRASES;
 use parquet_embed_tantivy::doc::{ArrowDocSchema, DocTantivySchema};
 use parquet_embed_tantivy::error::Result;
 use parquet_embed_tantivy::index::FullTextIndex;
@@ -71,21 +73,6 @@ async fn main() -> Result<()> {
     let ctx = SessionContext::new();
     ctx.register_table("t", provider)?;
 
-    let sql = "SELECT * FROM t where title LIKE '%idempotency normalization%'";
-    let explain_query = format!("EXPLAIN FORMAT TREE {sql}");
-    let df = ctx.sql(&explain_query).await?;
-    let result = df.to_string().await?;
-
-    info!("\n{result}");
-
-    let start = Instant::now();
-    let _df = ctx.sql(sql).await?;
-    let duration = start.elapsed();
-    // let result = df.to_string().await?;
-    // trace!("\n{result}");
-    trace!("Executed in {duration:?}. Query with full-text index: {sql}");
-
-    let sql = "SELECT * FROM t where title LIKE '%idempotency normalization%'";
     let ctx2 = SessionContext::new();
     ctx2.register_parquet(
         "t",
@@ -94,12 +81,78 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    let generate_double_term_query =
+        |x: &str, y: &str| format!("SELECT * FROM t where title LIKE '%{x} {y}%'");
+    // let generate_count_double_term_query =
+    //     |x: &str, y: &str| format!("SELECT COUNT(*) FROM t where title LIKE '%{x} {y}%'");
+    // let generate_single_term_query = |x: &str| format!("SELECT * FROM t where title LIKE '%{x}%'");
+
+    // let permutations = SELECTIVITY_PHRASES
+    //     .iter()
+    //     .permutations(2)
+    //     .flat_map(|pair| [(pair[0].0, pair[1].0)])
+    //     .collect::<Vec<_>>();
+
+    let search_terms = SELECTIVITY_PHRASES.iter().map(|(phrase, _)| phrase);
+    let cross_product_terms = search_terms
+        .clone()
+        .cartesian_product(search_terms.clone())
+        .collect::<Vec<_>>();
+    let sql_terms_iter = cross_product_terms
+        .iter()
+        .map(|(left, right)| {
+            let sql = generate_double_term_query(left, right);
+
+            (sql, (**left, **right))
+        })
+        .collect::<Vec<_>>();
+
+    // Warmup
+    let (sql, _) = sql_terms_iter.last().unwrap();
+
+    let df = ctx.sql(sql).await?;
     let start = Instant::now();
-    let _df = ctx2.sql(sql).await?;
+    let result = df.to_string().await?;
     let duration = start.elapsed();
-    // let result = df.to_string().await?;
-    // trace!("\n{result}");
-    trace!("Executed in {duration:?}. Query: {sql}");
+    info!("{sql}:\n{result}");
+    info!("Warmup execution: {duration:?}. SQL: {sql}",);
+
+    for (i, (sql, _)) in sql_terms_iter.iter().enumerate() {
+        // With full-text index
+        let df1 = ctx.sql(sql).await?;
+        let start1 = Instant::now();
+        let _result = df1.to_string().await?;
+        let optimized = start1.elapsed();
+
+        // Without full-text index
+        let df2 = ctx2.sql(sql).await?;
+        let start2 = Instant::now();
+        let _result = df2.to_string().await?;
+        let baseline = start2.elapsed();
+
+        let delta = optimized.abs_diff(baseline);
+
+        // Run count query on baseline version
+        // Without full-text index
+        let df3 = ctx2.sql(sql).await?;
+        let count = df3.count().await?;
+
+        let baseline_s = baseline.as_secs_f32();
+        let optimized_s = optimized.as_secs_f32();
+
+        if optimized < baseline {
+            let speedup = baseline_s / optimized_s;
+
+            info!(
+                "[{i}] speedup:{speedup:.2}x diff: {delta:?} optimized: {optimized:?}, baseline: {baseline:?} count: {count}. SQL: {sql}.",
+            );
+        } else {
+            let slowdown = optimized_s / baseline_s;
+            info!(
+                "[{i}] slowdown:{slowdown:.2}x diff: {delta:?} optimized: {optimized:?}, baseline: {baseline:?} count: {count}. SQL: {sql}",
+            );
+        }
+    }
 
     Ok(())
 }
