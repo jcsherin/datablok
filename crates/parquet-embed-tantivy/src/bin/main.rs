@@ -22,6 +22,10 @@ struct Args {
     /// Input directory for generated parquet files
     #[arg(short, long)]
     input_dir: PathBuf,
+
+    /// Optional list of query identifiers to execute (e.g. --queries 1,3,9)
+    #[arg(short, long, value_delimiter = ',')]
+    queries: Vec<u32>,
 }
 
 /// These are the stages for preparing the index as a sequence of bytes.
@@ -106,13 +110,19 @@ async fn main() -> Result<()> {
         Ok((result, duration))
     };
 
-    // Warmup
-    for sql in search_phrases.iter().take(20) {
-        let (_, duration) = execute_sql(&ctx_optimized, sql).await?;
-        info!("Warmup execution: {duration:?}. SQL: {sql}",);
+    // Warmup the OS page caches, and negate disk I/O latency
+    info!("Warming up OS page cache...");
+    for sql in search_phrases.iter() {
+        let _ = execute_sql(&ctx_optimized, sql).await?;
     }
 
-    for (i, sql) in search_phrases.iter().enumerate() {
+    let queries_to_execute = search_phrases
+        .iter()
+        .enumerate()
+        .filter(|(id, _)| args.queries.is_empty() || args.queries.contains(&(*id as u32)))
+        .collect_vec();
+
+    for (i, sql) in queries_to_execute {
         let (_, optimized) = execute_sql(&ctx_optimized, sql).await?;
         let (_, baseline) = execute_sql(&ctx_baseline, sql).await?;
 
