@@ -185,6 +185,32 @@ impl Debug for FullTextIndex {
     }
 }
 
+impl FullTextIndex {
+    /// Extract inner search phrase from within leading and trailing wildcards.
+    ///
+    /// Returns `Some(phrase)` or None.
+    ///
+    /// This implementation is concrete and not general purpose. It handles only a single filter
+    /// expression from a text column named: `title`.
+    fn extract_search_phrase(filter: &Expr) -> Option<&str> {
+        match filter {
+            Expr::Like(like) if !like.negated => {
+                if let (Expr::Column(col), Expr::Literal(ScalarValue::Utf8(Some(pattern)), None)) =
+                    (&*like.expr, &*like.pattern)
+                {
+                    if col.name == "title" {
+                        return pattern
+                            .strip_prefix('%')
+                            .and_then(|rest| rest.strip_suffix('%'));
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
 #[async_trait]
 impl TableProvider for FullTextIndex {
     fn as_any(&self) -> &dyn Any {
@@ -207,31 +233,12 @@ impl TableProvider for FullTextIndex {
         _limit: Option<usize>,
     ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
         let _span = tracing::span!(tracing::Level::TRACE, "scan").entered();
-        let mut phrase: Option<&str> = None;
 
-        // Currently handles only a single wildcard LIKE query on the `title` column. A generalized
-        // implementation will use: [`PruningPredicate`]
-        //
-        // [`PruningPredicate`]: https://docs.rs/datafusion/latest/datafusion/physical_optimizer/pruning/struct.PruningPredicate.html
-        if filters.len() == 1 {
-            if let Expr::Like(like) = filters.first().unwrap() {
-                if !like.negated {
-                    if let (
-                        Expr::Column(col),
-                        Expr::Literal(ScalarValue::Utf8(Some(pattern)), None),
-                    ) = (&*like.expr, &*like.pattern)
-                    {
-                        if col.name == "title" {
-                            if let Some(inner) =
-                                pattern.strip_prefix('%').and_then(|s| s.strip_suffix('%'))
-                            {
-                                phrase = Some(inner);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let phrase = if filters.len() == 1 {
+            Self::extract_search_phrase(filters.first().unwrap())
+        } else {
+            unimplemented!("Supports only a single LIKE filter expression.")
+        };
 
         let mut matching_doc_ids = Vec::new();
         if let Some(inner) = phrase {
