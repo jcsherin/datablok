@@ -9,8 +9,8 @@ use parquet_embed_tantivy::index::FullTextIndex;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::info;
-use tracing_subscriber::FmtSubscriber;
+use tracing::{info, instrument, Instrument};
+use tracing_subscriber::fmt::format::FmtSpan;
 
 #[derive(Parser, Debug)]
 #[command(name = "main")]
@@ -64,22 +64,27 @@ struct Args {
 /// with readers who will skip the index embedded within the file.
 #[tokio::main]
 async fn main() -> Result<()> {
-    let subscriber = FmtSubscriber::builder()
+    tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .finish();
-
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+        .with_span_events(FmtSpan::CLOSE)
+        .compact()
+        .init();
 
     let args = Args::parse();
 
     let tantivy_docs_schema = Arc::new(DocTantivySchema::new().into_schema());
     let arrow_docs_schema = ArrowDocSchema::default();
 
-    let full_text_index = Arc::new(FullTextIndex::try_open(
-        &args.input_dir,
-        tantivy_docs_schema.clone(),
-        arrow_docs_schema.clone(),
-    )?);
+    let full_text_index = {
+        let _span = tracing::span!(tracing::Level::INFO, "load_full_text_index").entered();
+
+        Arc::new(FullTextIndex::try_open(
+            &args.input_dir,
+            tantivy_docs_schema.clone(),
+            arrow_docs_schema.clone(),
+        )?)
+    };
+
     let ctx_optimized = SessionContext::new();
     ctx_optimized.register_table("t", full_text_index)?;
 
@@ -105,51 +110,74 @@ async fn main() -> Result<()> {
         .map(generate_sql)
         .collect_vec();
 
-    let execute_sql = async |ctx: &SessionContext, sql: &str| -> Result<(String, Duration)> {
-        let df = ctx.sql(sql).await?;
-
-        let start = Instant::now();
-        let result = df.to_string().await?;
-        let duration = start.elapsed();
-
-        Ok((result, duration))
-    };
-
-    // Warmup the OS page caches, and negate disk I/O latency
-    info!("Warming up OS page cache...");
-    for sql in search_phrases.iter() {
-        let _ = execute_sql(&ctx_optimized, sql).await?;
-    }
-
-    let queries_to_execute = search_phrases
+    let filtered_queries = search_phrases
         .iter()
         .enumerate()
         .filter(|(id, _)| args.queries.is_empty() || args.queries.contains(&(*id as u32)))
         .collect_vec();
 
-    for (i, sql) in queries_to_execute {
-        let (_, optimized) = execute_sql(&ctx_optimized, sql).await?;
-        let (_, baseline) = execute_sql(&ctx_baseline, sql).await?;
+    // Warmup the OS page caches, and negate disk I/O latency
+    info!("Warming up OS page cache...");
+    for (_, sql) in filtered_queries.iter() {
+        execute_sql(&ctx_baseline, sql).await?;
+    }
 
-        let delta = optimized.abs_diff(baseline);
+    for (id, sql) in filtered_queries.iter() {
+        run_comparison(*id, sql, &ctx_baseline, &ctx_optimized).await?;
+    }
 
-        let row_count = ctx_baseline.sql(sql).await?.count().await?;
+    Ok(())
+}
 
-        let baseline_s = baseline.as_secs_f32();
-        let optimized_s = optimized.as_secs_f32();
+async fn execute_sql(ctx: &SessionContext, sql: &str) -> Result<Duration> {
+    let df = ctx
+        .sql(sql)
+        // .instrument(tracing::info_span!("create_dataframe_from_sql", sql=%sql))
+        .await?;
 
-        if optimized < baseline {
-            let speedup = baseline_s / optimized_s;
+    let start = Instant::now();
+    df.collect()
+        .instrument(tracing::info_span!("execute_sql", sql=%sql))
+        .await?;
+    let duration = start.elapsed();
 
-            info!(
-                "[{i}] speedup:{speedup:.2}x diff: {delta:?} optimized: {optimized:?}, baseline: {baseline:?} count: {row_count}. SQL: {sql}.",
-            );
-        } else {
-            let slowdown = optimized_s / baseline_s;
-            info!(
-                "[{i}] slowdown:{slowdown:.2}x diff: {delta:?} optimized: {optimized:?}, baseline: {baseline:?} count: {row_count}. SQL: {sql}",
-            );
-        }
+    info!("Completed in {duration:?}");
+
+    Ok(duration)
+}
+
+#[instrument(name = "query_comparison", skip_all, fields(query_id = %_query_id))]
+async fn run_comparison(
+    _query_id: usize,
+    sql: &str,
+    ctx_baseline: &SessionContext,
+    ctx_optimized: &SessionContext,
+) -> Result<()> {
+    let baseline = execute_sql(ctx_baseline, sql)
+        .instrument(tracing::info_span!("run", run_type = "baseline"))
+        .await?;
+
+    let optimized = execute_sql(ctx_optimized, sql)
+        .instrument(tracing::info_span!("run", run_type = "optimized"))
+        .await?;
+
+    // let row_count = ctx_baseline.sql(sql).await?.count().await?;
+    // info!("Matching row count: {row_count}");
+
+    let delta = optimized.abs_diff(baseline);
+    let baseline_s = baseline.as_secs_f32();
+    let optimized_s = optimized.as_secs_f32();
+
+    if optimized < baseline {
+        let speedup = baseline_s / optimized_s;
+
+        info!("speedup: {speedup:.3}x");
+        info!("-{delta:?} optimized: {optimized:?}, baseline: {baseline:?}");
+    } else {
+        let slowdown = optimized_s / baseline_s;
+
+        info!("slowdown: {slowdown:.3}x");
+        info!("+{delta:?} optimized: {optimized:?}, baseline: {baseline:?}");
     }
 
     Ok(())

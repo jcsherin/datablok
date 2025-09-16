@@ -105,6 +105,7 @@ impl FullTextIndex {
         index_schema: Arc<Schema>,
         arrow_schema: SchemaRef,
     ) -> Result<Self> {
+        let _span = tracing::span!(tracing::Level::TRACE, "open", ?path).entered();
         let dir = Self::try_read_directory(path)?;
         let index = Index::open_or_create(dir, index_schema.as_ref().clone())?;
 
@@ -117,6 +118,7 @@ impl FullTextIndex {
     }
 
     fn try_read_directory(path: &Path) -> Result<ReadOnlyArchiveDirectory> {
+        let _span = tracing::span!(tracing::Level::TRACE, "read_directory", ?path).entered();
         let mut file = File::open(path)?;
 
         let reader = SerializedFileReader::new(file.try_clone()?)?;
@@ -124,19 +126,33 @@ impl FullTextIndex {
         let index_offset = Self::try_index_offset(path, reader)?;
 
         file.seek(SeekFrom::Start(index_offset))?;
-        let serialized_header = Header::from_reader(&file)?;
+        let header = {
+            let _span = tracing::span!(tracing::Level::TRACE, "deserialize_header", ?index_offset)
+                .entered();
 
-        let mut data_block_buffer = vec![0u8; serialized_header.total_data_block_size as usize];
-        file.read_exact(&mut data_block_buffer)?;
-        let serialized_data = DataBlock::new(data_block_buffer);
+            Header::from_reader(&file)?
+        };
 
-        Ok(ReadOnlyArchiveDirectory::new(
-            serialized_header,
-            serialized_data,
-        ))
+        let data_block = {
+            let _span = tracing::span!(
+                tracing::Level::TRACE,
+                "deserialize_data_block",
+                ?index_offset
+            )
+            .entered();
+
+            let mut data_block_buffer = vec![0u8; header.total_data_block_size as usize];
+            file.read_exact(&mut data_block_buffer)?;
+
+            DataBlock::new(data_block_buffer)
+        };
+
+        Ok(ReadOnlyArchiveDirectory::new(header, data_block))
     }
 
     fn try_index_offset(path: &Path, reader: SerializedFileReader<File>) -> Result<u64> {
+        let _span = tracing::span!(tracing::Level::TRACE, "index_offset", ?path).entered();
+
         let index_offset = reader
             .metadata()
             .file_metadata()
@@ -159,6 +175,8 @@ impl FullTextIndex {
             })?
             .parse::<u64>()
             .map_err(|e| ParquetError::General(e.to_string()))?;
+
+        trace!("index offset: {index_offset}");
 
         Ok(index_offset)
     }
@@ -209,7 +227,6 @@ impl TableProvider for FullTextIndex {
                         Expr::Literal(ScalarValue::Utf8(Some(pattern)), None),
                     ) = (&*like.expr, &*like.pattern)
                     {
-                        trace!("Column: {}, Pattern: {pattern}", col.name);
                         if col.name == "title" {
                             if let Some(inner) =
                                 pattern.strip_prefix('%').and_then(|s| s.strip_suffix('%'))
@@ -224,8 +241,6 @@ impl TableProvider for FullTextIndex {
 
         let mut matching_doc_ids = Vec::new();
         if let Some(inner) = phrase {
-            trace!("phrase: {inner}");
-
             let title_field = self
                 .index_schema
                 .get_field("title")
@@ -262,6 +277,8 @@ impl TableProvider for FullTextIndex {
                 matching_doc_ids.extend(matched_ids);
             }
         }
+
+        trace!("matching count: {}", matching_doc_ids.len());
 
         // constructing the `id IN (...)` expression to pushdown into parquet file
         let ids: Vec<Expr> = matching_doc_ids.iter().map(|doc_id| lit(*doc_id)).collect();
