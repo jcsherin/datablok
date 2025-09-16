@@ -25,10 +25,10 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tantivy::collector::DocSetCollector;
+use tantivy::collector::{Count, DocSetCollector};
 use tantivy::directory::ManagedDirectory;
-use tantivy::query::{PhraseQuery, Query};
-use tantivy::schema::{Schema, Value};
+use tantivy::query::PhraseQuery;
+use tantivy::schema::{Field, Schema, Value};
 use tantivy::{Index, IndexReader, TantivyDocument, Term};
 use tracing::trace;
 
@@ -209,6 +209,51 @@ impl FullTextIndex {
             _ => None,
         }
     }
+
+    fn get_index_field(&self, name: &str) -> Result<Field> {
+        Ok(self
+            .index_schema
+            .get_field(name)
+            .map_err(|e| DataFusionError::External(e.into()))?)
+    }
+
+    fn create_index_query(&self, phrase: &str) -> Result<PhraseQuery> {
+        let title_field = self.get_index_field("title")?;
+
+        let terms = phrase
+            .split_whitespace()
+            .map(|part| Term::from_field_text(title_field, part))
+            .collect::<Vec<_>>();
+
+        Ok(PhraseQuery::new(terms))
+    }
+
+    fn search_index(&self, query: PhraseQuery) -> Result<(Vec<u64>, usize)> {
+        let reader = self
+            .index
+            .reader()
+            .map_err(|e| DataFusionError::External(e.into()))?;
+        let searcher = reader.searcher();
+
+        let (hits, count) = searcher
+            .search(&query, &(DocSetCollector, Count))
+            .map_err(|e| DataFusionError::External(e.into()))?;
+
+        let id_field = self.get_index_field("id")?;
+
+        // TODO: retrieve the id (FAST) without loading the full document
+        let hits = hits
+            .iter()
+            .flat_map(|addr| {
+                let indexed_doc = searcher.doc::<TantivyDocument>(*addr).ok()?; // Discards the error if doc is not found in the index
+                let id = indexed_doc.get_first(id_field).and_then(|x| x.as_u64());
+
+                id
+            })
+            .collect::<Vec<_>>();
+
+        Ok((hits, count))
+    }
 }
 
 #[async_trait]
@@ -240,46 +285,25 @@ impl TableProvider for FullTextIndex {
             unimplemented!("Supports only a single LIKE filter expression.")
         };
 
-        let mut matching_doc_ids = Vec::new();
-        if let Some(inner) = phrase {
-            let title_field = self
-                .index_schema
-                .get_field("title")
-                .map_err(|e| DataFusionError::External(e.into()))?;
-            let id_field = self
-                .index_schema
-                .get_field("id")
-                .map_err(|e| DataFusionError::External(e.into()))?;
-            let title_phrase_query = Box::new(PhraseQuery::new(
-                inner
-                    .split_whitespace()
-                    .map(|s| Term::from_field_text(title_field, s))
-                    .collect(),
-            )) as Box<dyn Query>;
-
-            let reader = self
-                .index
-                .reader()
-                .map_err(|e| DataFusionError::External(e.into()))?;
-            let searcher = reader.searcher();
-
-            if let Ok(matches) = searcher.search(&*title_phrase_query, &DocSetCollector) {
-                let matched_ids = matches
-                    .iter()
-                    .filter_map(|doc_address| {
-                        searcher
-                            .doc::<TantivyDocument>(*doc_address)
-                            .ok()? // discard the error if doc doesn't exist in the index
-                            .get_first(id_field)
-                            .and_then(|v| v.as_u64())
-                    })
-                    .collect::<Vec<_>>();
-
-                matching_doc_ids.extend(matched_ids);
+        let matching_doc_ids = match phrase {
+            None => {
+                trace!("matching count: 0");
+                vec![]
             }
-        }
+            Some(inner) => {
+                let title_phrase_query = self
+                    .create_index_query(inner)
+                    .map_err(|e| DataFusionError::External(e.into()))?;
 
-        trace!("matching count: {}", matching_doc_ids.len());
+                let (hits, count) = self
+                    .search_index(title_phrase_query.clone())
+                    .map_err(|e| DataFusionError::External(e.into()))?;
+
+                trace!("matching count: {count}");
+                hits
+            }
+        };
+
         if matching_doc_ids.is_empty() {
             trace!("Skipping parquet data source (EmptyExec).");
             return Ok(Arc::new(EmptyExec::new(self.arrow_schema.clone())));
