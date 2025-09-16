@@ -1,6 +1,5 @@
 use crate::custom_index::data_block::DataBlock;
 use crate::custom_index::header::Header;
-use log::trace;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -9,6 +8,7 @@ use tantivy::directory::{
     AntiCallToken, FileHandle, TerminatingWrite, WatchCallback, WatchHandle, WritePtr,
 };
 use tantivy::Directory;
+use tracing::trace;
 
 #[allow(dead_code)]
 #[derive(Debug)]

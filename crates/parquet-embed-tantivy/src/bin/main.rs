@@ -2,7 +2,6 @@ use clap::Parser;
 use datafusion::prelude::{ParquetReadOptions, SessionContext};
 use datafusion_execution::config::SessionConfig;
 use itertools::Itertools;
-use log::info;
 use parquet_embed_tantivy::data_generator::words::SELECTIVITY_PHRASES;
 use parquet_embed_tantivy::doc::{ArrowDocSchema, DocTantivySchema};
 use parquet_embed_tantivy::error::Result;
@@ -10,6 +9,8 @@ use parquet_embed_tantivy::index::FullTextIndex;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tracing::info;
+use tracing_subscriber::FmtSubscriber;
 
 #[derive(Parser, Debug)]
 #[command(name = "main")]
@@ -63,7 +64,11 @@ struct Args {
 /// with readers who will skip the index embedded within the file.
 #[tokio::main]
 async fn main() -> Result<()> {
-    setup_logging();
+    let subscriber = FmtSubscriber::builder()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     let args = Args::parse();
 
@@ -148,9 +153,4 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Initializes the logger.
-fn setup_logging() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 }

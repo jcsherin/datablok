@@ -3,9 +3,9 @@ use crate::custom_index::file_metadata::FileMetadata;
 use crate::custom_index::file_slice::LogicalFileSlice;
 use crate::custom_index::header::{Header, MAGIC_BYTES, VERSION};
 use crate::index::TantivyDocIndex;
-use log::trace;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
+use tracing::trace;
 
 /// A draft manifest of the physical files managed by the Tantivy index.
 ///

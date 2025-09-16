@@ -3,7 +3,6 @@ use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, UInt64Build
 use datafusion::arrow::datatypes::SchemaRef;
 use fs::create_dir_all;
 use itertools::Itertools;
-use log::trace;
 use parquet_embed_tantivy::custom_index::manifest::DraftManifest;
 use parquet_embed_tantivy::data_generator::title::TitleGenerator;
 use parquet_embed_tantivy::data_generator::words::SELECTIVITY_PHRASES;
@@ -20,6 +19,8 @@ use std::sync::Arc;
 use tantivy::query::{BooleanQuery, Occur, TermQuery};
 use tantivy::schema::IndexRecordOption;
 use tantivy::Term;
+use tracing::trace;
+use tracing_subscriber::FmtSubscriber;
 
 #[derive(Parser, Debug)]
 #[command(name = "parquet_gen")]
@@ -124,7 +125,11 @@ fn create_parquet_file(
 }
 
 fn main() -> Result<()> {
-    setup_logging();
+    let subscriber = FmtSubscriber::builder()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     let args = Args::parse();
 
@@ -171,9 +176,4 @@ fn main() -> Result<()> {
         Some(&tantivy_doc_index),
     )?;
     Ok(())
-}
-
-/// Initializes the logger.
-fn setup_logging() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 }

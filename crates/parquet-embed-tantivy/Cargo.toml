@@ -4,8 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-env_logger = { version = "0.11.8" }
-log = { version = "0.4.27" }
 tantivy = { version = "0.24.1", default-features = false }
 thiserror = "2.0.12"
 crc32fast = "1.4.2"
@@ -26,6 +24,8 @@ tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
 rand = "0.9.2"
 clap = { version = "4.5.37", features = ["derive"] }
 itertools = "0.14.0"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3.10.1"

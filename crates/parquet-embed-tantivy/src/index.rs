@@ -16,7 +16,6 @@ use datafusion_datasource_parquet::source::ParquetSource;
 use datafusion_execution::object_store::ObjectStoreUrl;
 use datafusion_expr::{col, lit, Expr, TableProviderFilterPushDown, TableType};
 use datafusion_physical_plan::ExecutionPlan;
-use log::trace;
 use parquet::errors::ParquetError;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use std::any::Any;
@@ -30,6 +29,7 @@ use tantivy::directory::ManagedDirectory;
 use tantivy::query::{PhraseQuery, Query};
 use tantivy::schema::{Schema, Value};
 use tantivy::{Index, IndexReader, TantivyDocument, Term};
+use tracing::trace;
 
 pub const INDEX_WRITER_MEMORY_BUDGET_IN_BYTES: usize = 50_000_000;
 
@@ -197,9 +197,6 @@ impl TableProvider for FullTextIndex {
     ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
         let mut phrase: Option<&str> = None;
 
-        trace!("Projection: {:?}", _projection);
-        trace!("Filters: {:?}", filters);
-        trace!("Limit: {:?}", _limit);
         // Currently handles only a single wildcard LIKE query on the `title` column. A generalized
         // implementation will use: [`PruningPredicate`]
         //
@@ -266,17 +263,13 @@ impl TableProvider for FullTextIndex {
             }
         }
 
-        trace!("Matching doc ids from full-text index: {matching_doc_ids:?}");
-
         // constructing the `id IN (...)` expression to pushdown into parquet file
         let ids: Vec<Expr> = matching_doc_ids.iter().map(|doc_id| lit(*doc_id)).collect();
         let id_filter = col("id").in_list(ids, false);
-        trace!("filter expr: {id_filter}");
 
         let df_schema = DFSchema::try_from(self.arrow_schema.clone())?;
         let physical_predicate =
             create_physical_expr(&id_filter, &df_schema, state.execution_props())?;
-        trace!("physical expr: {physical_predicate}");
 
         let object_store_url = ObjectStoreUrl::local_filesystem();
         let source = Arc::new(

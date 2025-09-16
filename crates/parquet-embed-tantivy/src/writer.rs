@@ -3,7 +3,6 @@ use crate::custom_index::header::Header;
 use crate::error::Result;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use log::trace;
 use parquet::arrow::ArrowWriter;
 use parquet::data_type::AsBytes;
 use parquet::file::metadata::KeyValue;
@@ -11,6 +10,7 @@ use parquet::file::properties::WriterProperties;
 use std::fs::File;
 use std::ops::Deref;
 use std::path::PathBuf;
+use tracing::trace;
 
 pub struct ParquetWriter {
     path: PathBuf,
