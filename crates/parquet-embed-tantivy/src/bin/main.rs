@@ -1,5 +1,6 @@
 use clap::Parser;
 use datafusion::prelude::{ParquetReadOptions, SessionContext};
+use datafusion_execution::config::SessionConfig;
 use itertools::Itertools;
 use log::info;
 use parquet_embed_tantivy::data_generator::words::SELECTIVITY_PHRASES;
@@ -8,7 +9,7 @@ use parquet_embed_tantivy::error::Result;
 use parquet_embed_tantivy::index::FullTextIndex;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Parser, Debug)]
 #[command(name = "main")]
@@ -20,7 +21,7 @@ use std::time::Instant;
 struct Args {
     /// Input directory for generated parquet files
     #[arg(short, long)]
-    parquet_with_index: PathBuf,
+    input_dir: PathBuf,
 }
 
 /// These are the stages for preparing the index as a sequence of bytes.
@@ -65,77 +66,59 @@ async fn main() -> Result<()> {
     let tantivy_docs_schema = Arc::new(DocTantivySchema::new().into_schema());
     let arrow_docs_schema = ArrowDocSchema::default();
 
-    let provider = Arc::new(FullTextIndex::try_open(
-        &args.parquet_with_index,
+    let full_text_index = Arc::new(FullTextIndex::try_open(
+        &args.input_dir,
         tantivy_docs_schema.clone(),
         arrow_docs_schema.clone(),
     )?);
-    let ctx = SessionContext::new();
-    ctx.register_table("t", provider)?;
+    let ctx_optimized = SessionContext::new();
+    ctx_optimized.register_table("t", full_text_index)?;
 
-    let ctx2 = SessionContext::new();
-    ctx2.register_parquet(
-        "t",
-        args.parquet_with_index.to_str().unwrap(),
-        ParquetReadOptions::default(),
-    )
-    .await?;
+    let session_config = SessionConfig::new()
+        .with_parquet_pruning(true)
+        .with_parquet_page_index_pruning(true);
+    let ctx_baseline = SessionContext::new_with_config(session_config);
+    ctx_baseline
+        .register_parquet(
+            "t",
+            args.input_dir.to_str().unwrap(),
+            ParquetReadOptions::default(),
+        )
+        .await?;
 
-    let generate_double_term_query =
-        |x: &str, y: &str| format!("SELECT * FROM t where title LIKE '%{x} {y}%'");
-    // let generate_count_double_term_query =
-    //     |x: &str, y: &str| format!("SELECT COUNT(*) FROM t where title LIKE '%{x} {y}%'");
-    // let generate_single_term_query = |x: &str| format!("SELECT * FROM t where title LIKE '%{x}%'");
-
-    // let permutations = SELECTIVITY_PHRASES
-    //     .iter()
-    //     .permutations(2)
-    //     .flat_map(|pair| [(pair[0].0, pair[1].0)])
-    //     .collect::<Vec<_>>();
-
-    let search_terms = SELECTIVITY_PHRASES.iter().map(|(phrase, _)| phrase);
-    let cross_product_terms = search_terms
+    let generate_sql = |(first, second): (&str, &str)| {
+        format!("SELECT * FROM t WHERE title LIKE '%{first} {second}%'")
+    };
+    let control_words = SELECTIVITY_PHRASES.iter().map(|(fst, _)| *fst);
+    let search_phrases = control_words
         .clone()
-        .cartesian_product(search_terms.clone())
-        .collect::<Vec<_>>();
-    let sql_terms_iter = cross_product_terms
-        .iter()
-        .map(|(left, right)| {
-            let sql = generate_double_term_query(left, right);
+        .cartesian_product(control_words.clone())
+        .map(generate_sql)
+        .collect_vec();
 
-            (sql, (**left, **right))
-        })
-        .collect::<Vec<_>>();
+    let execute_sql = async |ctx: &SessionContext, sql: &str| -> Result<(String, Duration)> {
+        let df = ctx.sql(sql).await?;
+
+        let start = Instant::now();
+        let result = df.to_string().await?;
+        let duration = start.elapsed();
+
+        Ok((result, duration))
+    };
 
     // Warmup
-    let (sql, _) = sql_terms_iter.last().unwrap();
+    for sql in search_phrases.iter().take(20) {
+        let (_, duration) = execute_sql(&ctx_optimized, sql).await?;
+        info!("Warmup execution: {duration:?}. SQL: {sql}",);
+    }
 
-    let df = ctx.sql(sql).await?;
-    let start = Instant::now();
-    let result = df.to_string().await?;
-    let duration = start.elapsed();
-    info!("{sql}:\n{result}");
-    info!("Warmup execution: {duration:?}. SQL: {sql}",);
-
-    for (i, (sql, _)) in sql_terms_iter.iter().enumerate() {
-        // With full-text index
-        let df1 = ctx.sql(sql).await?;
-        let start1 = Instant::now();
-        let _result = df1.to_string().await?;
-        let optimized = start1.elapsed();
-
-        // Without full-text index
-        let df2 = ctx2.sql(sql).await?;
-        let start2 = Instant::now();
-        let _result = df2.to_string().await?;
-        let baseline = start2.elapsed();
+    for (i, sql) in search_phrases.iter().enumerate() {
+        let (_, optimized) = execute_sql(&ctx_optimized, sql).await?;
+        let (_, baseline) = execute_sql(&ctx_baseline, sql).await?;
 
         let delta = optimized.abs_diff(baseline);
 
-        // Run count query on baseline version
-        // Without full-text index
-        let df3 = ctx2.sql(sql).await?;
-        let count = df3.count().await?;
+        let row_count = ctx_baseline.sql(sql).await?.count().await?;
 
         let baseline_s = baseline.as_secs_f32();
         let optimized_s = optimized.as_secs_f32();
@@ -144,12 +127,12 @@ async fn main() -> Result<()> {
             let speedup = baseline_s / optimized_s;
 
             info!(
-                "[{i}] speedup:{speedup:.2}x diff: {delta:?} optimized: {optimized:?}, baseline: {baseline:?} count: {count}. SQL: {sql}.",
+                "[{i}] speedup:{speedup:.2}x diff: {delta:?} optimized: {optimized:?}, baseline: {baseline:?} count: {row_count}. SQL: {sql}.",
             );
         } else {
             let slowdown = optimized_s / baseline_s;
             info!(
-                "[{i}] slowdown:{slowdown:.2}x diff: {delta:?} optimized: {optimized:?}, baseline: {baseline:?} count: {count}. SQL: {sql}",
+                "[{i}] slowdown:{slowdown:.2}x diff: {delta:?} optimized: {optimized:?}, baseline: {baseline:?} count: {row_count}. SQL: {sql}",
             );
         }
     }
