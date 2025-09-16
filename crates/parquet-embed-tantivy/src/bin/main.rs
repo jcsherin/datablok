@@ -9,7 +9,7 @@ use parquet_embed_tantivy::index::FullTextIndex;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{info, instrument, Instrument};
+use tracing::{info, instrument, trace, Instrument};
 use tracing_subscriber::fmt::format::FmtSpan;
 
 #[derive(Parser, Debug)]
@@ -75,15 +75,11 @@ async fn main() -> Result<()> {
     let tantivy_docs_schema = Arc::new(DocTantivySchema::new().into_schema());
     let arrow_docs_schema = ArrowDocSchema::default();
 
-    let full_text_index = {
-        let _span = tracing::span!(tracing::Level::INFO, "load_full_text_index").entered();
-
-        Arc::new(FullTextIndex::try_open(
-            &args.input_dir,
-            tantivy_docs_schema.clone(),
-            arrow_docs_schema.clone(),
-        )?)
-    };
+    let full_text_index = Arc::new(FullTextIndex::try_open(
+        &args.input_dir,
+        tantivy_docs_schema.clone(),
+        arrow_docs_schema.clone(),
+    )?);
 
     let ctx_optimized = SessionContext::new();
     ctx_optimized.register_table("t", full_text_index)?;
@@ -119,7 +115,9 @@ async fn main() -> Result<()> {
     // Warmup the OS page caches, and negate disk I/O latency
     info!("Warming up OS page cache...");
     for (_, sql) in filtered_queries.iter() {
-        execute_sql(&ctx_baseline, sql).await?;
+        execute_sql(&ctx_baseline, sql)
+            .instrument(tracing::info_span!("warmup_os_cache"))
+            .await?;
     }
 
     for (id, sql) in filtered_queries.iter() {
@@ -132,12 +130,12 @@ async fn main() -> Result<()> {
 async fn execute_sql(ctx: &SessionContext, sql: &str) -> Result<Duration> {
     let df = ctx
         .sql(sql)
-        // .instrument(tracing::info_span!("create_dataframe_from_sql", sql=%sql))
+        .instrument(tracing::info_span!("create_dataframe_from_sql", sql=%sql))
         .await?;
 
     let start = Instant::now();
     df.collect()
-        .instrument(tracing::info_span!("execute_sql", sql=%sql))
+        .instrument(tracing::info_span!("execute_sql"))
         .await?;
     let duration = start.elapsed();
 
@@ -157,12 +155,13 @@ async fn run_comparison(
         .instrument(tracing::info_span!("run", run_type = "baseline"))
         .await?;
 
+    trace!("{sql}");
     let optimized = execute_sql(ctx_optimized, sql)
         .instrument(tracing::info_span!("run", run_type = "optimized"))
         .await?;
 
-    // let row_count = ctx_baseline.sql(sql).await?.count().await?;
-    // info!("Matching row count: {row_count}");
+    let row_count = ctx_baseline.sql(sql).await?.count().await?;
+    info!("Row count: {row_count}");
 
     let delta = optimized.abs_diff(baseline);
     let baseline_s = baseline.as_secs_f32();

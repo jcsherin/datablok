@@ -106,7 +106,7 @@ impl FullTextIndex {
         index_schema: Arc<Schema>,
         arrow_schema: SchemaRef,
     ) -> Result<Self> {
-        let _span = tracing::span!(tracing::Level::TRACE, "open", ?path).entered();
+        let _span = tracing::span!(tracing::Level::TRACE, "open").entered();
         let dir = Self::try_read_directory(path)?;
         let index = Index::open_or_create(dir, index_schema.as_ref().clone())?;
 
@@ -119,7 +119,7 @@ impl FullTextIndex {
     }
 
     fn try_read_directory(path: &Path) -> Result<ReadOnlyArchiveDirectory> {
-        let _span = tracing::span!(tracing::Level::TRACE, "read_directory", ?path).entered();
+        let _span = tracing::span!(tracing::Level::TRACE, "read_directory").entered();
         let mut file = File::open(path)?;
 
         let reader = SerializedFileReader::new(file.try_clone()?)?;
@@ -128,19 +128,13 @@ impl FullTextIndex {
 
         file.seek(SeekFrom::Start(index_offset))?;
         let header = {
-            let _span = tracing::span!(tracing::Level::TRACE, "deserialize_header", ?index_offset)
-                .entered();
+            let _span = tracing::span!(tracing::Level::TRACE, "deserialize_header").entered();
 
             Header::from_reader(&file)?
         };
 
         let data_block = {
-            let _span = tracing::span!(
-                tracing::Level::TRACE,
-                "deserialize_data_block",
-                ?index_offset
-            )
-            .entered();
+            let _span = tracing::span!(tracing::Level::TRACE, "deserialize_data_block",).entered();
 
             let mut data_block_buffer = vec![0u8; header.total_data_block_size as usize];
             file.read_exact(&mut data_block_buffer)?;
@@ -152,7 +146,7 @@ impl FullTextIndex {
     }
 
     fn try_index_offset(path: &Path, reader: SerializedFileReader<File>) -> Result<u64> {
-        let _span = tracing::span!(tracing::Level::TRACE, "index_offset", ?path).entered();
+        let _span = tracing::span!(tracing::Level::TRACE, "index_offset").entered();
 
         let index_offset = reader
             .metadata()
@@ -176,8 +170,6 @@ impl FullTextIndex {
             })?
             .parse::<u64>()
             .map_err(|e| ParquetError::General(e.to_string()))?;
-
-        trace!("index offset: {index_offset}");
 
         Ok(index_offset)
     }
@@ -214,6 +206,7 @@ impl TableProvider for FullTextIndex {
         filters: &[Expr],
         _limit: Option<usize>,
     ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+        let _span = tracing::span!(tracing::Level::TRACE, "scan").entered();
         let mut phrase: Option<&str> = None;
 
         // Currently handles only a single wildcard LIKE query on the `title` column. A generalized
