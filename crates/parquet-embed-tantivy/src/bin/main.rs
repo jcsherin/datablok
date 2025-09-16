@@ -1,6 +1,7 @@
 use clap::Parser;
 use datafusion::prelude::{ParquetReadOptions, SessionContext};
 use datafusion_execution::config::SessionConfig;
+use datafusion_expr::col;
 use itertools::Itertools;
 use parquet_embed_tantivy::data_generator::words::SELECTIVITY_PHRASES;
 use parquet_embed_tantivy::doc::{ArrowDocSchema, DocTantivySchema};
@@ -162,6 +163,14 @@ async fn run_comparison(
 
     let row_count = ctx_baseline.sql(sql).await?.count().await?;
     info!("Row count: {row_count}");
+
+    if row_count > 0 {
+        let df = ctx_optimized.sql(sql).await?;
+        let df = df.sort(vec![col("id").sort(true, true)])?;
+        let df = df.limit(0, Some(5))?;
+        let output = df.to_string().await?;
+        trace!("Showing first 5 rows:\n{output}\n");
+    }
 
     let delta = optimized.abs_diff(baseline);
     let baseline_s = baseline.as_secs_f32();
