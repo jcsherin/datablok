@@ -15,6 +15,7 @@ use datafusion_datasource::PartitionedFile;
 use datafusion_datasource_parquet::source::ParquetSource;
 use datafusion_execution::object_store::ObjectStoreUrl;
 use datafusion_expr::{col, lit, Expr, TableProviderFilterPushDown, TableType};
+use datafusion_physical_plan::empty::EmptyExec;
 use datafusion_physical_plan::ExecutionPlan;
 use parquet::errors::ParquetError;
 use parquet::file::reader::{FileReader, SerializedFileReader};
@@ -279,6 +280,10 @@ impl TableProvider for FullTextIndex {
         }
 
         trace!("matching count: {}", matching_doc_ids.len());
+        if matching_doc_ids.is_empty() {
+            trace!("Skipping parquet data source (EmptyExec).");
+            return Ok(Arc::new(EmptyExec::new(self.arrow_schema.clone())));
+        }
 
         // constructing the `id IN (...)` expression to pushdown into parquet file
         let ids: Vec<Expr> = matching_doc_ids.iter().map(|doc_id| lit(*doc_id)).collect();
