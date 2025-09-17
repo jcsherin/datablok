@@ -293,9 +293,9 @@ impl TableProvider for FullTextIndex {
     async fn scan(
         &self,
         state: &dyn Session,
-        _projection: Option<&Vec<usize>>,
+        projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        _limit: Option<usize>,
+        limit: Option<usize>,
     ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
         let _span = tracing::span!(tracing::Level::TRACE, "scan").entered();
 
@@ -331,7 +331,6 @@ impl TableProvider for FullTextIndex {
 
         let predicate = self.create_predicate(state.execution_props(), &matching_doc_ids)?;
 
-        let object_store_url = ObjectStoreUrl::local_filesystem();
         let source = Arc::new(
             ParquetSource::default()
                 .with_enable_page_index(true)
@@ -343,9 +342,12 @@ impl TableProvider for FullTextIndex {
         let len = std::fs::metadata(&absolute_path)?.len();
         let partitioned_file = PartitionedFile::new(absolute_path.to_string_lossy(), len);
 
+        let object_store_url = ObjectStoreUrl::local_filesystem();
         let file_scan_config =
             FileScanConfigBuilder::new(object_store_url, self.schema().clone(), source)
                 .with_file(partitioned_file)
+                .with_projection(projection.cloned())
+                .with_limit(limit)
                 .build();
 
         Ok(Arc::new(DataSourceExec::new(Arc::new(file_scan_config))))
