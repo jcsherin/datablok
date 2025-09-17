@@ -1,4 +1,5 @@
 use clap::Parser;
+use comfy_table::Table;
 use datafusion::prelude::{ParquetReadOptions, SessionContext};
 use datafusion_execution::config::SessionConfig;
 use datafusion_expr::col;
@@ -121,12 +122,56 @@ async fn main() -> Result<()> {
             .await?;
     }
 
+    let mut results: Vec<(QueryComparisonMetrics, &str)> = Vec::with_capacity(filtered_queries.len());
     for (id, sql) in filtered_queries.iter() {
-        let _metrics = run_comparison(*id, sql, &ctx_baseline, &ctx_optimized).await?;
-        trace!("{_metrics:?}");
+        let metrics = run_comparison(*id, sql, &ctx_baseline, &ctx_optimized).await?;
+        trace!("{metrics:?}");
+
+        results.push((metrics, sql));
     }
 
+    print_summary_table(results);
+
     Ok(())
+}
+
+fn print_summary_table(results: Vec<(QueryComparisonMetrics, &str)>) {
+    let mut table = Table::new();
+    table.set_header(vec![
+        "Query ID",
+        "Baseline Time",
+        "Optimized Time",
+        "Diff Time",
+        "Perf Change",
+        "Rows",
+        "SQL",
+    ]);
+
+    for (m, sql) in results {
+        let delta = m.abs_diff();
+        let formatted_delta = if m.is_speedup() {
+            format!("-{delta:.2?}")
+        } else {
+            format!("+{delta:.2?}")
+        };
+
+        let formatted_perf_change = match m.get_change_in_performance() {
+            PerfChange::Speedup(v) => { format!("{v:.2}X") }
+            PerfChange::Slowdown(v) => { format!("{v:.2}X (slowdown)") }
+        };
+
+        table.add_row(vec![
+            m.query_id().to_string(),
+            format!("{:.2?}", m.baseline()),
+            format!("{:.2?}", m.optimized()),
+            formatted_delta,
+            formatted_perf_change,
+            m.total_row_count().to_string(),
+            sql.to_string(),
+        ]);
+    }
+
+    println!("{table}");
 }
 
 async fn execute_sql(ctx: &SessionContext, sql: &str) -> Result<Duration> {
@@ -182,12 +227,10 @@ impl QueryComparisonMetrics {
         self.optimized_query
     }
 
-    #[allow(dead_code)]
     fn total_row_count(&self) -> usize {
         self.total_row_count
     }
 
-    #[allow(dead_code)]
     fn query_id(&self) -> usize {
         self.query_id
     }
