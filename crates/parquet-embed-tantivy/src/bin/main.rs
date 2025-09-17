@@ -122,7 +122,8 @@ async fn main() -> Result<()> {
     }
 
     for (id, sql) in filtered_queries.iter() {
-        run_comparison(*id, sql, &ctx_baseline, &ctx_optimized).await?;
+        let _metrics = run_comparison(*id, sql, &ctx_baseline, &ctx_optimized).await?;
+        trace!("{_metrics:?}");
     }
 
     Ok(())
@@ -145,14 +146,80 @@ async fn execute_sql(ctx: &SessionContext, sql: &str) -> Result<Duration> {
     Ok(duration)
 }
 
-#[instrument(name = "query_comparison", skip_all, fields(query_id = %_query_id, sql = %sql, row_count, speedup, slowdown, delta, optimized_duration, baseline_duration
+#[derive(Debug)]
+struct QueryComparisonMetrics {
+    query_id: usize,
+    baseline_query: Duration,
+    optimized_query: Duration,
+    total_row_count: usize,
+}
+
+enum PerfChange {
+    Speedup(f32),
+    Slowdown(f32),
+}
+
+impl QueryComparisonMetrics {
+    fn new(
+        query_id: usize,
+        baseline_query: Duration,
+        optimized_query: Duration,
+        total_row_count: usize,
+    ) -> Self {
+        Self {
+            query_id,
+            baseline_query,
+            optimized_query,
+            total_row_count,
+        }
+    }
+
+    fn baseline(&self) -> Duration {
+        self.baseline_query
+    }
+
+    fn optimized(&self) -> Duration {
+        self.optimized_query
+    }
+
+    #[allow(dead_code)]
+    fn total_row_count(&self) -> usize {
+        self.total_row_count
+    }
+
+    #[allow(dead_code)]
+    fn query_id(&self) -> usize {
+        self.query_id
+    }
+
+    fn is_speedup(&self) -> bool {
+        self.baseline_query > self.optimized_query
+    }
+
+    fn abs_diff(&self) -> Duration {
+        self.optimized_query.abs_diff(self.baseline_query)
+    }
+
+    fn get_change_in_performance(&self) -> PerfChange {
+        let baseline = self.baseline_query.as_secs_f32();
+        let optimized = self.optimized_query.as_secs_f32();
+
+        if self.is_speedup() {
+            PerfChange::Speedup(baseline / optimized)
+        } else {
+            PerfChange::Slowdown(optimized / baseline)
+        }
+    }
+}
+
+#[instrument(name = "query_comparison", skip_all, fields(query_id = %query_id, sql = %sql, row_count, speedup, slowdown, delta, optimized_duration, baseline_duration
 ))]
 async fn run_comparison(
-    _query_id: usize,
+    query_id: usize,
     sql: &str,
     ctx_baseline: &SessionContext,
     ctx_optimized: &SessionContext,
-) -> Result<()> {
+) -> Result<QueryComparisonMetrics> {
     let baseline = execute_sql(ctx_baseline, sql)
         .instrument(tracing::trace_span!("run", run_type = "baseline"))
         .await?;
@@ -172,24 +239,21 @@ async fn run_comparison(
         trace!("Showing first 5 rows:\n{output}\n");
     }
 
-    let delta = optimized.abs_diff(baseline);
-    let baseline_s = baseline.as_secs_f32();
-    let optimized_s = optimized.as_secs_f32();
+    let metrics = QueryComparisonMetrics::new(query_id, baseline, optimized, row_count);
 
-    tracing::Span::current().record("baseline_duration", format!("{baseline:?}"));
-    tracing::Span::current().record("optimized_duration", format!("{optimized:?}"));
+    tracing::Span::current().record("baseline_duration", format!("{:?}", metrics.baseline()));
+    tracing::Span::current().record("optimized_duration", format!("{:?}", metrics.optimized()));
 
-    if optimized < baseline {
-        tracing::Span::current().record("delta", format!("-{delta:?}"));
-
-        let speedup = baseline_s / optimized_s;
-        tracing::Span::current().record("speedup", format!("{speedup:.3}X"));
-    } else {
-        tracing::Span::current().record("delta", format!("+{delta:?}"));
-
-        let slowdown = optimized_s / baseline_s;
-        tracing::Span::current().record("slowdown", format!("{slowdown:.3}X"));
+    match metrics.get_change_in_performance() {
+        PerfChange::Speedup(change) => {
+            tracing::Span::current().record("delta", format!("-{:?}", metrics.abs_diff()));
+            tracing::Span::current().record("speedup", format!("{change:.3}X"));
+        }
+        PerfChange::Slowdown(change) => {
+            tracing::Span::current().record("delta", format!("+{:?}", metrics.abs_diff()));
+            tracing::Span::current().record("slowdown", format!("{change:.3}X"));
+        }
     }
 
-    Ok(())
+    Ok(metrics)
 }
