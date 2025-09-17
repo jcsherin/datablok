@@ -194,6 +194,8 @@ impl FullTextIndex {
     /// This implementation is concrete and not general purpose. It handles only a single filter
     /// expression from a text column named: `title`.
     fn extract_search_phrase(filter: &Expr) -> Option<&str> {
+        let _span = tracing::span!(tracing::Level::TRACE, "extract_title_like_pattern").entered();
+
         match filter {
             Expr::Like(like) if !like.negated => {
                 if let (Expr::Column(col), Expr::Literal(ScalarValue::Utf8(Some(pattern)), None)) =
@@ -219,6 +221,8 @@ impl FullTextIndex {
     }
 
     fn create_index_query(&self, phrase: &str) -> Result<PhraseQuery> {
+        let _span = tracing::span!(tracing::Level::TRACE, "create_index_query").entered();
+
         let title_field = self.get_index_field("title")?;
 
         let terms = phrase
@@ -230,28 +234,39 @@ impl FullTextIndex {
     }
 
     fn search_index(&self, query: PhraseQuery) -> Result<(Vec<u64>, usize)> {
+        let _span = tracing::span!(tracing::Level::TRACE, "search_index").entered();
+
         let reader = self
             .index
             .reader()
             .map_err(|e| DataFusionError::External(e.into()))?;
         let searcher = reader.searcher();
 
-        let (hits, count) = searcher
-            .search(&query, &(DocSetCollector, Count))
-            .map_err(|e| DataFusionError::External(e.into()))?;
+        let (hits, count) = {
+            let _span =
+                tracing::span!(tracing::Level::TRACE, "search_execute_hits_and_count").entered();
+
+            searcher
+                .search(&query, &(DocSetCollector, Count))
+                .map_err(|e| DataFusionError::External(e.into()))?
+        };
 
         let id_field = self.get_index_field("id")?;
 
         // TODO: retrieve the id (FAST) without loading the full document
-        let hits = hits
-            .iter()
-            .flat_map(|addr| {
-                let indexed_doc = searcher.doc::<TantivyDocument>(*addr).ok()?; // Discards the error if doc is not found in the index
-                let id = indexed_doc.get_first(id_field).and_then(|x| x.as_u64());
+        let hits = {
+            let _span =
+                tracing::span!(tracing::Level::TRACE, "resolve_hits_to_id_values").entered();
 
-                id
-            })
-            .collect::<Vec<_>>();
+            hits.iter()
+                .flat_map(|addr| {
+                    let indexed_doc = searcher.doc::<TantivyDocument>(*addr).ok()?; // Discards the error if doc is not found in the index
+                    let id = indexed_doc.get_first(id_field).and_then(|x| x.as_u64());
+
+                    id
+                })
+                .collect::<Vec<_>>()
+        };
 
         Ok((hits, count))
     }
@@ -306,22 +321,26 @@ impl TableProvider for FullTextIndex {
             unimplemented!("Supports only a single LIKE filter expression.")
         };
 
-        let query_result_ids = match phrase {
-            None => {
-                trace!("matching count: 0");
-                vec![]
-            }
-            Some(inner) => {
-                let title_phrase_query = self
-                    .create_index_query(inner)
-                    .map_err(|e| DataFusionError::External(e.into()))?;
+        let query_result_ids = {
+            let _span = tracing::span!(tracing::Level::TRACE, "query_result_ids").entered();
 
-                let (hits, count) = self
-                    .search_index(title_phrase_query.clone())
-                    .map_err(|e| DataFusionError::External(e.into()))?;
+            match phrase {
+                None => {
+                    trace!("matching count: 0");
+                    vec![]
+                }
+                Some(inner) => {
+                    let title_phrase_query = self
+                        .create_index_query(inner)
+                        .map_err(|e| DataFusionError::External(e.into()))?;
 
-                trace!("matching count: {count}");
-                hits
+                    let (hits, count) = self
+                        .search_index(title_phrase_query.clone())
+                        .map_err(|e| DataFusionError::External(e.into()))?;
+
+                    trace!("matching count: {count}");
+                    hits
+                }
             }
         };
 
@@ -330,28 +349,37 @@ impl TableProvider for FullTextIndex {
             return Ok(Arc::new(EmptyExec::new(self.arrow_schema.clone())));
         }
 
-        let predicate = self.ids_to_predicate(state.execution_props(), &query_result_ids)?;
+        let predicate = {
+            let _span = tracing::span!(tracing::Level::TRACE, "ids_to_predicate").entered();
 
-        let source = Arc::new(
-            ParquetSource::default()
-                .with_enable_page_index(true)
-                .with_predicate(predicate)
-                .with_pushdown_filters(true),
-        );
+            self.ids_to_predicate(state.execution_props(), &query_result_ids)?
+        };
 
-        let absolute_path = std::fs::canonicalize(&self.path)?;
-        let len = std::fs::metadata(&absolute_path)?.len();
-        let partitioned_file = PartitionedFile::new(absolute_path.to_string_lossy(), len);
+        {
+            let _span =
+                tracing::span!(tracing::Level::TRACE, "create_optimized_physical_plan").entered();
 
-        let object_store_url = ObjectStoreUrl::local_filesystem();
-        let file_scan_config =
-            FileScanConfigBuilder::new(object_store_url, self.schema().clone(), source)
-                .with_file(partitioned_file)
-                .with_projection(projection.cloned())
-                .with_limit(limit)
-                .build();
+            let source = Arc::new(
+                ParquetSource::default()
+                    .with_enable_page_index(true)
+                    .with_predicate(predicate)
+                    .with_pushdown_filters(true),
+            );
 
-        Ok(Arc::new(DataSourceExec::new(Arc::new(file_scan_config))))
+            let absolute_path = std::fs::canonicalize(&self.path)?;
+            let len = std::fs::metadata(&absolute_path)?.len();
+            let partitioned_file = PartitionedFile::new(absolute_path.to_string_lossy(), len);
+
+            let object_store_url = ObjectStoreUrl::local_filesystem();
+            let file_scan_config =
+                FileScanConfigBuilder::new(object_store_url, self.schema().clone(), source)
+                    .with_file(partitioned_file)
+                    .with_projection(projection.cloned())
+                    .with_limit(limit)
+                    .build();
+
+            Ok(Arc::new(DataSourceExec::new(Arc::new(file_scan_config))))
+        }
     }
 
     fn supports_filters_pushdown(
