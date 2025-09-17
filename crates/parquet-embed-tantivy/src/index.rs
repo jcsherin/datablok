@@ -260,7 +260,7 @@ impl FullTextIndex {
     ///
     /// The matching ids from full-text search is used to construct an `id IN (...)` filter
     /// expression.
-    fn create_predicate(
+    fn ids_to_predicate(
         &self,
         props: &ExecutionProps,
         ids: &[u64],
@@ -299,13 +299,14 @@ impl TableProvider for FullTextIndex {
     ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
         let _span = tracing::span!(tracing::Level::TRACE, "scan").entered();
 
+        // TODO: robust filter handling without panic
         let phrase = if filters.len() == 1 {
             Self::extract_search_phrase(filters.first().unwrap())
         } else {
             unimplemented!("Supports only a single LIKE filter expression.")
         };
 
-        let matching_doc_ids = match phrase {
+        let query_result_ids = match phrase {
             None => {
                 trace!("matching count: 0");
                 vec![]
@@ -324,12 +325,12 @@ impl TableProvider for FullTextIndex {
             }
         };
 
-        if matching_doc_ids.is_empty() {
+        if query_result_ids.is_empty() {
             trace!("Skipping parquet data source (EmptyExec).");
             return Ok(Arc::new(EmptyExec::new(self.arrow_schema.clone())));
         }
 
-        let predicate = self.create_predicate(state.execution_props(), &matching_doc_ids)?;
+        let predicate = self.ids_to_predicate(state.execution_props(), &query_result_ids)?;
 
         let source = Arc::new(
             ParquetSource::default()
