@@ -14,9 +14,10 @@ use datafusion_datasource::source::DataSourceExec;
 use datafusion_datasource::PartitionedFile;
 use datafusion_datasource_parquet::source::ParquetSource;
 use datafusion_execution::object_store::ObjectStoreUrl;
+use datafusion_expr::execution_props::ExecutionProps;
 use datafusion_expr::{col, lit, Expr, TableProviderFilterPushDown, TableType};
 use datafusion_physical_plan::empty::EmptyExec;
-use datafusion_physical_plan::ExecutionPlan;
+use datafusion_physical_plan::{ExecutionPlan, PhysicalExpr};
 use parquet::errors::ParquetError;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use std::any::Any;
@@ -254,6 +255,25 @@ impl FullTextIndex {
 
         Ok((hits, count))
     }
+
+    /// Creates a pushdown filter expression
+    ///
+    /// The matching ids from full-text search is used to construct an `id IN (...)` filter
+    /// expression.
+    fn create_predicate(
+        &self,
+        props: &ExecutionProps,
+        ids: &[u64],
+    ) -> datafusion_common::Result<Arc<dyn PhysicalExpr>> {
+        let list = ids.iter().map(|id| lit(*id)).collect::<Vec<_>>();
+        let filter = col("id").in_list(list, false);
+
+        let schema = DFSchema::try_from(self.arrow_schema.clone())?;
+
+        let predicate = create_physical_expr(&filter, &schema, props)?;
+
+        Ok(predicate)
+    }
 }
 
 #[async_trait]
@@ -309,19 +329,13 @@ impl TableProvider for FullTextIndex {
             return Ok(Arc::new(EmptyExec::new(self.arrow_schema.clone())));
         }
 
-        // constructing the `id IN (...)` expression to pushdown into parquet file
-        let ids: Vec<Expr> = matching_doc_ids.iter().map(|doc_id| lit(*doc_id)).collect();
-        let id_filter = col("id").in_list(ids, false);
-
-        let df_schema = DFSchema::try_from(self.arrow_schema.clone())?;
-        let physical_predicate =
-            create_physical_expr(&id_filter, &df_schema, state.execution_props())?;
+        let predicate = self.create_predicate(state.execution_props(), &matching_doc_ids)?;
 
         let object_store_url = ObjectStoreUrl::local_filesystem();
         let source = Arc::new(
             ParquetSource::default()
                 .with_enable_page_index(true)
-                .with_predicate(physical_predicate)
+                .with_predicate(predicate)
                 .with_pushdown_filters(true),
         );
 
