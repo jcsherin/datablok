@@ -131,12 +131,12 @@ async fn main() -> Result<()> {
 async fn execute_sql(ctx: &SessionContext, sql: &str) -> Result<Duration> {
     let df = ctx
         .sql(sql)
-        .instrument(tracing::info_span!("create_dataframe_from_sql", sql=%sql))
+        .instrument(tracing::trace_span!("create_dataframe_from_sql", sql=%sql))
         .await?;
 
     let start = Instant::now();
     df.collect()
-        .instrument(tracing::info_span!("execute_sql"))
+        .instrument(tracing::trace_span!("execute_sql"))
         .await?;
     let duration = start.elapsed();
 
@@ -145,7 +145,8 @@ async fn execute_sql(ctx: &SessionContext, sql: &str) -> Result<Duration> {
     Ok(duration)
 }
 
-#[instrument(name = "query_comparison", skip_all, fields(query_id = %_query_id))]
+#[instrument(name = "query_comparison", skip_all, fields(query_id = %_query_id, sql = %sql, row_count, speedup, slowdown, delta, optimized_duration, baseline_duration
+))]
 async fn run_comparison(
     _query_id: usize,
     sql: &str,
@@ -153,16 +154,15 @@ async fn run_comparison(
     ctx_optimized: &SessionContext,
 ) -> Result<()> {
     let baseline = execute_sql(ctx_baseline, sql)
-        .instrument(tracing::info_span!("run", run_type = "baseline"))
+        .instrument(tracing::trace_span!("run", run_type = "baseline"))
         .await?;
 
-    trace!("{sql}");
     let optimized = execute_sql(ctx_optimized, sql)
-        .instrument(tracing::info_span!("run", run_type = "optimized"))
+        .instrument(tracing::trace_span!("run", run_type = "optimized"))
         .await?;
 
     let row_count = ctx_baseline.sql(sql).await?.count().await?;
-    info!("Row count: {row_count}");
+    tracing::Span::current().record("row_count", row_count);
 
     if row_count > 0 {
         let df = ctx_optimized.sql(sql).await?;
@@ -176,16 +176,19 @@ async fn run_comparison(
     let baseline_s = baseline.as_secs_f32();
     let optimized_s = optimized.as_secs_f32();
 
+    tracing::Span::current().record("baseline_duration", format!("{baseline:?}"));
+    tracing::Span::current().record("optimized_duration", format!("{optimized:?}"));
+
     if optimized < baseline {
+        tracing::Span::current().record("delta", format!("-{delta:?}"));
+
         let speedup = baseline_s / optimized_s;
-
-        info!("speedup: {speedup:.3}x");
-        info!("-{delta:?} optimized: {optimized:?}, baseline: {baseline:?}");
+        tracing::Span::current().record("speedup", format!("{speedup:.3}X"));
     } else {
-        let slowdown = optimized_s / baseline_s;
+        tracing::Span::current().record("delta", format!("+{delta:?}"));
 
-        info!("slowdown: {slowdown:.3}x");
-        info!("+{delta:?} optimized: {optimized:?}, baseline: {baseline:?}");
+        let slowdown = optimized_s / baseline_s;
+        tracing::Span::current().record("slowdown", format!("{slowdown:.3}X"));
     }
 
     Ok(())
