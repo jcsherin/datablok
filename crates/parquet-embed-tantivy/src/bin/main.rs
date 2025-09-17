@@ -1,5 +1,5 @@
 use clap::Parser;
-use comfy_table::Table;
+use comfy_table::{presets, CellAlignment, Table, TableComponent};
 use datafusion::prelude::{ParquetReadOptions, SessionContext};
 use datafusion_execution::config::SessionConfig;
 use datafusion_expr::col;
@@ -145,16 +145,42 @@ async fn main() -> Result<()> {
 
 fn print_summary_table(results: Vec<(QueryComparisonMetrics, &str)>, parquet_row_count: usize) {
     let mut table = Table::new();
+    table.load_preset(presets::NOTHING);
     table.set_header(vec![
         "Query ID",
-        // "SQL",
         "Rows",
         "Selectivity",
-        "Baseline Time",
-        "Optimized Time",
-        "Diff Time",
+        "Baseline",
+        "With FTS",
+        "Diff",
         "Perf Change",
+        // "SQL",
     ]);
+    table.set_style(TableComponent::VerticalLines, '|');
+    table.set_style(TableComponent::LeftBorder, '|');
+    table.set_style(TableComponent::RightBorder, '|');
+
+    // Add header separator
+    table.set_style(TableComponent::HeaderLines, '-');
+    table.set_style(TableComponent::LeftHeaderIntersection, '+');
+    table.set_style(TableComponent::MiddleHeaderIntersections, '+');
+    table.set_style(TableComponent::RightHeaderIntersection, '+');
+
+    // Add top and bottom borders
+    table.set_style(TableComponent::TopBorder, '-');
+    table.set_style(TableComponent::BottomBorder, '-');
+    table.set_style(TableComponent::TopLeftCorner, '+');
+    table.set_style(TableComponent::TopRightCorner, '+');
+    table.set_style(TableComponent::BottomLeftCorner, '+');
+    table.set_style(TableComponent::BottomRightCorner, '+');
+    table.set_style(TableComponent::TopBorderIntersections, '+');
+    table.set_style(TableComponent::BottomBorderIntersections, '+');
+
+    for i in 0..=5 {
+        if let Some(column) = table.column_mut(i) {
+            column.set_cell_alignment(CellAlignment::Right);
+        }
+    }
 
     let query_count = results.len();
     let mut slow_query_count = 0;
@@ -181,13 +207,13 @@ fn print_summary_table(results: Vec<(QueryComparisonMetrics, &str)>, parquet_row
 
         table.add_row(vec![
             m.query_id().to_string(),
-            // sql.to_string(),
             m.total_row_count().to_string(),
             format!("{:.4}%", selectivity_percentage),
             format!("{:.2?}", m.baseline()),
             format!("{:.2?}", m.optimized()),
             formatted_delta,
             formatted_perf_change,
+            // sql.to_string(),
         ]);
     }
 
