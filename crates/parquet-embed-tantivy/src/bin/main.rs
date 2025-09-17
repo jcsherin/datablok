@@ -122,7 +122,8 @@ async fn main() -> Result<()> {
             .await?;
     }
 
-    let mut results: Vec<(QueryComparisonMetrics, &str)> = Vec::with_capacity(filtered_queries.len());
+    let mut results: Vec<(QueryComparisonMetrics, &str)> =
+        Vec::with_capacity(filtered_queries.len());
     for (id, sql) in filtered_queries.iter() {
         let metrics = run_comparison(*id, sql, &ctx_baseline, &ctx_optimized).await?;
         trace!("{metrics:?}");
@@ -130,24 +131,34 @@ async fn main() -> Result<()> {
         results.push((metrics, sql));
     }
 
-    print_summary_table(results);
+    let total_row_count =
+        count_parquet_rows(&ctx_optimized, args.input_dir.to_str().unwrap()).await?;
+
+    print_summary_table(results, total_row_count);
+    println!(
+        "Parquet: {} row count: {total_row_count}",
+        args.input_dir.to_str().unwrap()
+    );
 
     Ok(())
 }
 
-fn print_summary_table(results: Vec<(QueryComparisonMetrics, &str)>) {
+fn print_summary_table(results: Vec<(QueryComparisonMetrics, &str)>, parquet_row_count: usize) {
     let mut table = Table::new();
     table.set_header(vec![
         "Query ID",
+        // "SQL",
+        "Rows",
+        "Selectivity",
         "Baseline Time",
         "Optimized Time",
         "Diff Time",
         "Perf Change",
-        "Rows",
-        "SQL",
     ]);
 
-    for (m, sql) in results {
+    let query_count = results.len();
+    let mut slow_query_count = 0;
+    for (m, _sql) in results {
         let delta = m.abs_diff();
         let formatted_delta = if m.is_speedup() {
             format!("-{delta:.2?}")
@@ -156,22 +167,41 @@ fn print_summary_table(results: Vec<(QueryComparisonMetrics, &str)>) {
         };
 
         let formatted_perf_change = match m.get_change_in_performance() {
-            PerfChange::Speedup(v) => { format!("{v:.2}X") }
-            PerfChange::Slowdown(v) => { format!("{v:.2}X (slowdown)") }
+            PerfChange::Speedup(v) => {
+                format!("{v:.2}X")
+            }
+            PerfChange::Slowdown(v) => {
+                slow_query_count += 1;
+                format!("{v:.2}X (slowdown)")
+            }
         };
+
+        let selectivity_percentage =
+            (m.total_row_count() as f32 / parquet_row_count as f32) * 100.0;
 
         table.add_row(vec![
             m.query_id().to_string(),
+            // sql.to_string(),
+            m.total_row_count().to_string(),
+            format!("{:.4}%", selectivity_percentage),
             format!("{:.2?}", m.baseline()),
             format!("{:.2?}", m.optimized()),
             formatted_delta,
             formatted_perf_change,
-            m.total_row_count().to_string(),
-            sql.to_string(),
         ]);
     }
 
     println!("{table}");
+    println!("Slow Queries: {slow_query_count} of {query_count}");
+}
+
+async fn count_parquet_rows(ctx: &SessionContext, path: &str) -> Result<usize> {
+    let df = ctx
+        .read_parquet(path, ParquetReadOptions::default())
+        .await?;
+    let total_rows = df.count().await?;
+
+    Ok(total_rows)
 }
 
 async fn execute_sql(ctx: &SessionContext, sql: &str) -> Result<Duration> {
