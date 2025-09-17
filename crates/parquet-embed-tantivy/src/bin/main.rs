@@ -8,6 +8,7 @@ use parquet_embed_tantivy::data_generator::words::SELECTIVITY_PHRASES;
 use parquet_embed_tantivy::doc::{ArrowDocSchema, DocTantivySchema};
 use parquet_embed_tantivy::error::Result;
 use parquet_embed_tantivy::index::FullTextIndex;
+use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -143,7 +144,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn print_summary_table(results: Vec<(QueryComparisonMetrics, &str)>, parquet_row_count: usize) {
+fn print_summary_table(mut results: Vec<(QueryComparisonMetrics, &str)>, parquet_row_count: usize) {
+    results.sort_by(|(a, _), (b, _)| {
+        a.get_change_in_performance()
+            .cmp(&b.get_change_in_performance())
+    });
+
     let mut table = Table::new();
     table.load_preset(presets::NOTHING);
     table.set_header(vec![
@@ -156,25 +162,25 @@ fn print_summary_table(results: Vec<(QueryComparisonMetrics, &str)>, parquet_row
         "Perf Change",
         // "SQL",
     ]);
-    table.set_style(TableComponent::VerticalLines, '|');
-    table.set_style(TableComponent::LeftBorder, '|');
-    table.set_style(TableComponent::RightBorder, '|');
+    table.set_style(TableComponent::VerticalLines, '│');
+    table.set_style(TableComponent::LeftBorder, '│');
+    table.set_style(TableComponent::RightBorder, '│');
 
     // Add header separator
-    table.set_style(TableComponent::HeaderLines, '-');
-    table.set_style(TableComponent::LeftHeaderIntersection, '+');
-    table.set_style(TableComponent::MiddleHeaderIntersections, '+');
-    table.set_style(TableComponent::RightHeaderIntersection, '+');
+    table.set_style(TableComponent::HeaderLines, '─');
+    table.set_style(TableComponent::LeftHeaderIntersection, '├');
+    table.set_style(TableComponent::MiddleHeaderIntersections, '┼');
+    table.set_style(TableComponent::RightHeaderIntersection, '┤');
 
     // Add top and bottom borders
-    table.set_style(TableComponent::TopBorder, '-');
-    table.set_style(TableComponent::BottomBorder, '-');
-    table.set_style(TableComponent::TopLeftCorner, '+');
-    table.set_style(TableComponent::TopRightCorner, '+');
-    table.set_style(TableComponent::BottomLeftCorner, '+');
-    table.set_style(TableComponent::BottomRightCorner, '+');
-    table.set_style(TableComponent::TopBorderIntersections, '+');
-    table.set_style(TableComponent::BottomBorderIntersections, '+');
+    table.set_style(TableComponent::TopBorder, '─');
+    table.set_style(TableComponent::BottomBorder, '─');
+    table.set_style(TableComponent::TopLeftCorner, '┌');
+    table.set_style(TableComponent::TopRightCorner, '┐');
+    table.set_style(TableComponent::BottomLeftCorner, '└');
+    table.set_style(TableComponent::BottomRightCorner, '┘');
+    table.set_style(TableComponent::TopBorderIntersections, '┬');
+    table.set_style(TableComponent::BottomBorderIntersections, '┴');
 
     for i in 0..=5 {
         if let Some(column) = table.column_mut(i) {
@@ -258,6 +264,21 @@ struct QueryComparisonMetrics {
 enum PerfChange {
     Speedup(f32),
     Slowdown(f32),
+}
+
+impl PerfChange {
+    pub fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (PerfChange::Speedup(val_a), PerfChange::Speedup(val_b)) => {
+                val_b.partial_cmp(val_a).unwrap_or(Ordering::Equal)
+            }
+            (PerfChange::Slowdown(val_a), PerfChange::Slowdown(val_b)) => {
+                val_a.partial_cmp(val_b).unwrap_or(Ordering::Equal)
+            }
+            (PerfChange::Speedup(_), PerfChange::Slowdown(_)) => Ordering::Less,
+            (PerfChange::Slowdown(_), PerfChange::Speedup(_)) => Ordering::Greater,
+        }
+    }
 }
 
 impl QueryComparisonMetrics {
