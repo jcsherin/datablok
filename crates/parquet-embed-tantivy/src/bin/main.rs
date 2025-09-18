@@ -154,11 +154,11 @@ fn print_summary_table(mut results: Vec<(QueryComparisonMetrics, &str)>, parquet
     table.load_preset(presets::NOTHING);
     table.set_header(vec![
         "Query ID",
-        "Rows",
-        "Selectivity",
         "Baseline",
         "With FTS",
         "Diff",
+        "Rows",
+        "Selectivity",
         "Perf Change",
         // "SQL",
     ]);
@@ -213,13 +213,13 @@ fn print_summary_table(mut results: Vec<(QueryComparisonMetrics, &str)>, parquet
 
         table.add_row(vec![
             m.query_id().to_string(),
-            m.total_row_count().to_string(),
-            format!("{:.4}%", selectivity_percentage),
             format!("{:.2?}", m.baseline()),
             format!("{:.2?}", m.optimized()),
             formatted_delta,
-            formatted_perf_change,
             // sql.to_string(),
+            m.total_row_count().to_string(),
+            format!("{:.4}%", selectivity_percentage),
+            formatted_perf_change,
         ]);
     }
 
