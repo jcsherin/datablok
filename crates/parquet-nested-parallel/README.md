@@ -1,338 +1,133 @@
-This program demonstrates a parallel, high-throughput pipeline for shredding
-nested data structures and writing them to multiple Parquet files concurrently.
-It implements multiple partitions of multi-producer, single consumer pattern.
-Each partition contains multiple producer threads that generate millions of
-nested data and then streams them to a dedicated writer thread which writes to
-a Parquet file.
+A fast, parallel Parquet nested data generator built using [Arrow and Parquet].
 
-The data is generated with a [Zipfian-like] skew, rather than a uniform
-distribution. This better reflects real-world data, where distributions are
-rarely uniform and typically feature a long-tail of less frequent values.
+I wrote a [blog post] documenting the sequence of performance improvements in
+reducing the total runtime, and improving the CPU efficiency fixing one
+bottleneck after another.
 
-[Zipfian-like]: https://en.wikipedia.org/wiki/Zipf%27s_law
+Skip to [Implementation Notes](#implementation-notes).
 
-- [ ] Add a section on how performance improved 10x through a series of
-  data-driven performance improvements.
+### Generating a Synthetic Dataset
 
-### How to Run
+First, build in `release` mode:
 
-Run this from the repo root:
-
-```zsh
-RUST_LOG=info cargo run -p parquet-nested-parallel --release
+```text
+cargo build -p parquet-nested-parallel --release
 ```
 
-### Development CI
+To generate a dataset with 10 million rows:
 
-For running the same workflow as GitHub CI in local development environment:
+```text
+$ RUST_LOG=info ./target/release/parquet-nested-parallel --target-records 10000000
 
-```zsh
+[2025-09-18T08:26:30.233440Z INFO  parquet_nested_parallel] Running with command: --target-records 10000000 --record-batch-size 4096 --num-writers 4 --output-dir output_parquet --output-filename contacts
+[2025-09-18T08:26:30.234610Z INFO  parquet_nested_parallel] Running with configuration: PipelineConfig { target_records: 10000000, num_writers: 4, num_producers: 8, record_batch_size: 4096, output_dir: "output_parquet", output_filename: "contacts", arrow_schema: Schema { fields: [Field { name: "name", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "phones", data_type: List(Field { name: "item", data_type: Struct([Field { name: "number", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "phone_type", data_type: Dictionary(UInt8, Utf8), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }], metadata: {} } }
+[2025-09-18T08:26:30.654594Z INFO  parquet_nested_parallel::pipeline] Finished writing parquet file: output_parquet/contacts_2.parquet. Wrote 2M records.
+[2025-09-18T08:26:30.656607Z INFO  parquet_nested_parallel::pipeline] Finished writing parquet file: output_parquet/contacts_3.parquet. Wrote 2M records.
+[2025-09-18T08:26:30.659806Z INFO  parquet_nested_parallel::pipeline] Finished writing parquet file: output_parquet/contacts_0.parquet. Wrote 3M records.
+[2025-09-18T08:26:30.661166Z INFO  parquet_nested_parallel::pipeline] Finished writing parquet file: output_parquet/contacts_1.parquet. Wrote 3M records.
+[2025-09-18T08:26:30.661234Z INFO  parquet_nested_parallel] Total generation and write time: 426.414666ms.
+[2025-09-18T08:26:30.661243Z INFO  parquet_nested_parallel] Record Throughput: 23M records/sec
+[2025-09-18T08:26:30.661245Z INFO  parquet_nested_parallel] In-Memory Throughput: 1.20 GB/s
+[2025-09-18T08:26:30.661248Z INFO  parquet_nested_parallel] Exiting main
+```
+
+The parquet files are written to `output_parquet/` directory:
+
+```text
+$ du -ah output_parquet                                                                                                                          02:09:33 PM
+ 73M    output_parquet/contacts_3.parquet
+ 73M    output_parquet/contacts_2.parquet
+ 73M    output_parquet/contacts_0.parquet
+ 73M    output_parquet/contacts_1.parquet
+291M    output_parquet
+```
+
+### Command-line Options
+
+```text
+A tool for generating and writing nested Parquet data in parallel
+
+Usage: parquet-nested-parallel [OPTIONS]
+
+Options:
+      --target-records <TARGET_RECORDS>
+          The target number of records to generate [default: 10000000]
+      --record-batch-size <RECORD_BATCH_SIZE>
+          The size of each record batch [default: 4096]
+      --num-writers <NUM_WRITERS>
+          The number of parallel writers [default: 4]
+      --output-dir <OUTPUT_DIR>
+          The output directory for the Parquet files [default: output_parquet]
+      --output-filename <OUTPUT_FILENAME>
+          The base filename for the output Parquet files [default: contacts]
+      --dry-run
+          If true, the pipeline will not run, but the effective configuration will be printed
+  -h, --help
+          Print help
+  -V, --version
+          Print version
+```
+
+### Local Dev CI Script
+
+To run the workflow in GitHub CI during local development:
+
+```text
 ./scripts/verify.sh parquet-nested-parallel --verbose
 ```
 
-### Expected Output
+This will execute cargo commands: `fmt`, `check`, `clippy`, and `test`.
 
-```text
-[2025-08-08T10:08:15Z INFO  parquet_parallel_nested] Generating 10M contacts across 16 cores. Chunk size: 256.
-[2025-08-08T10:08:15Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 3M contacts.
-[2025-08-08T10:08:15Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 2M contacts.
-[2025-08-08T10:08:15Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 3M contacts.
-[2025-08-08T10:08:15Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 2M contacts.
-[2025-08-08T10:08:15Z INFO  parquet_parallel_nested] Total generation and write time: 448.616305ms.
-[2025-08-08T10:08:15Z INFO  parquet_parallel_nested] Record Throughput: 22M records/sec
-[2025-08-08T10:08:15Z INFO  parquet_parallel_nested] In-Memory Throughput: 1.14 GB/s
+### Implementation Notes
+
+A [Zipfian-like] data skew is configured for each field in the nested data
+structure, to generate a dataset which better reflects real-world data
+distribution, which is not uniformly random. This is a set of light-weight
+functions defined in [skew.rs].
+
+The data generator is fused together with Arrow `RecordBatch` creation to
+increase throughput. This is a direct transformation from a native nested
+`struct` to an Arrow `RecordBatch` without other intermediate transformations.
+The low-level shredding API is imperative and difficult to use relative to flat
+array builders. This complexity is high even for a single level of nesting and
+a low number of fields. The fused shredding implementation is in [datagen.rs].
+
+#### Parallel Execution
+
+The total work is split into batches the size of a `RecordBatch`, and the data
+generator threads work in parallel without any coordination, or shared data
+structures to stream completed `RecordBatch`es to a writer thread. Each writer
+thread writes a separate Parquet file to disk.
+
+The entry point for parallel execution pipeline is in [pipeline.rs].
+
+```rust
+let config = PipelineConfigBuilder::new()
+    .with_target_records(cli.target_records)
+    .with_num_writers(cli.num_writers)
+    .with_record_batch_size(cli.record_batch_size)
+    .with_output_dir(output_dir)
+    .with_output_filename(cli.output_filename)
+    .with_arrow_schema(get_contact_schema())
+    .try_build()?;
+
+let factory = ContactGeneratorFactory::from_config(&config);
+let metrics = run_pipeline(&config, &factory)?;
 ```
+The number of Parquet Shredding writer threads is configurable from the CLI. The
+remaining available cores are then used for data generation. For the `Contact`
+struct, a 1:1 distribution of data generator and writer threads produces the
+best performance.
 
-### Performance
+[Arrow and Parquet]: https://docs.rs/parquet/55.0.0/parquet/
 
-#### Perf Stats
+[Zipfian-like]: https://en.wikipedia.org/wiki/Zipf%27s_law
 
-```text
-$ perf stat -e cycles,instructions,cache-references,cache-misses,branch-instructions,branch-misses ./target/release/parquet-parallel-nested
-...
- Performance counter stats for './target/release/parquet-parallel-nested':
+[skew.rs]: https://github.com/jcsherin/datablok/blob/4c790d0f672aea00870b68b5a25d25b592e60879/crates/parquet-nested-parallel/src/skew.rs
 
-    14,585,115,667      cycles                                                                  (83.43%)
-    30,262,087,965      instructions                     #    2.07  insn per cycle              (83.47%)
-       347,781,116      cache-references                                                        (83.43%)
-        41,686,650      cache-misses                     #   11.99% of all cache refs           (83.17%)
-     5,409,693,348      branch-instructions                                                     (83.15%)
-       131,463,682      branch-misses                    #    2.43% of all branches             (83.44%)
+[datagen.rs]: https://github.com/jcsherin/datablok/blob/4c790d0f672aea00870b68b5a25d25b592e60879/crates/parquet-nested-parallel/src/datagen.rs#L146-L217
 
-       0.572045514 seconds time elapsed
+[pipeline.rs]: https://github.com/jcsherin/datablok/blob/4c790d0f672aea00870b68b5a25d25b592e60879/crates/parquet-nested-parallel/src/pipeline.rs#L280-L392
 
-       2.960127000 seconds user
-       0.456030000 seconds sys 
-```
+[blog post]: https://jacobsherin.com/posts/2025-09-01-arrow-shredding-pipeline-perf/
 
-#### Hyperfine Stats
-
-```text
-$ ~/.cargo/bin/hyperfine --warmup 1 --runs 10 \                                                                                                              
-                         --prepare 'sync; echo 3 | sudo tee /proc/sys/vm/drop_caches' \
-                         './target/release/parquet-parallel-nested'
-
-Benchmark 1: ./target/release/parquet-parallel-nested
-  Time (mean ± σ):     536.5 ms ±   4.6 ms    [User: 2919.1 ms, System: 379.1 ms]
-  Range (min … max):   526.4 ms … 542.3 ms    10 runs
-```
-
-[//]: # (### Design Notes)
-
-[//]: # ()
-
-[//]: # (* The data generation for)
-
-[//]: # (  `Contact` struct uses a preset distribution defined for each of its fields.)
-
-[//]: # (    * Use)
-
-[//]: # (      `proptest` as the abstract shaper which knows the probability distribution of each)
-
-[//]: # (      `Contact` field defined)
-
-[//]: # (      as a `BoxedStrategy`.)
-
-[//]: # (    * The abstract &#40;template-like&#41; shape makes it possible to configure)
-
-[//]: # (      `Contact.name` to have realistic looking)
-
-[//]: # (      values by using the)
-
-[//]: # (      `fake` package, instead of generating random string values.)
-
-[//]: # (    * Each)
-
-[//]: # (      `Contact.phone_number` value is globally unique. This is implemented using a global)
-
-[//]: # (      `std::sync::atomic::AtomicUsize` counter which is sequentially incremented. This was chosen to balance between)
-
-[//]: # (      realistic enough numbers and not having to coordinate using an external data structure like a HashMap or bloom)
-
-[//]: # (      filters.)
-
-[//]: # (* Single-threaded execution on a single core is easy to write and requires less code. But it immediately runs into)
-
-[//]: # (  bottleneck if we need to generate >1M nested data structure values.)
-
-[//]: # (* Embarrassingly parallel data generation using `rayon` parallel iterator.)
-
-[//]: # (    * A single dedicated parquet writer &#40;consumer&#41; thread which reads)
-
-[//]: # (      `RecordBatch` from channel and write to file)
-
-[//]: # (      storage.)
-
-[//]: # (    * Many producers with a pipeline like: `PartialContact` _chunk_ -> `Contact`)
-
-[//]: # (      _chunk_ -> `RecordBatch`.)
-
-[//]: # (* Performance:)
-
-[//]: # (    * Changing)
-
-[//]: # (      `BASE_CHUNK_SIZE` from 8192 -> 256 makes the execution ~2x faster.)
-
-[//]: # (* Decisions:)
-
-[//]: # (    * Single-threaded vec materialization works upto 100K values. The next step is to generate small chunks and)
-
-[//]: # (      immediately write to disk to avoid OOM crashes.)
-
-[//]: # (    * There is a seam which separates the abstract shaping from the concrete &#40;assembly&#41; materialization of the value.)
-
-[//]: # (        * The)
-
-[//]: # (          `Contacts.phones.phone_number` is globally unique. The abstract shape contains the cardinality)
-
-[//]: # (          distribution of)
-
-[//]: # (          `Contact.phones` field, but the actual number which is used is only known at runtime tracked)
-
-[//]: # (          by a global)
-
-[//]: # (          `AtomicUsize` counter which is incremented by 1. Requires no coordination or locking.)
-
-[//]: # (    * Switching to `tikv-jemallocator` had a negative impact of performance.)
-
-[//]: # ()
-
-[//]: # (### 1 Billion Nested Data Structures)
-
-[//]: # ()
-
-[//]: # (Linear scaling in performance from 10 million through 1 billion is the effect of fixed costs being amortized over longer)
-
-[//]: # (runs. The current version fuses data generation with)
-
-[//]: # (`RecordBatch` building. The producer thread control flow is)
-
-[//]: # (simple. There is no extra code required for handling trailing rows which are less than the optimal)
-
-[//]: # (`RecordBatch`)
-
-[//]: # (size.)
-
-[//]: # ()
-
-[//]: # (```text)
-
-[//]: # (➜  rusty-doodles git:&#40;main&#41; ✗ perf stat -e cycles,instructions,cache-references,cache-misses,branch-instructions,branch-misses ./target/release/parquet-parallel-nested                  dbu6)
-
-[//]: # ([2025-07-03T18:22:25Z INFO  parquet_parallel_nested] Generating 1G contacts across 16 cores. Chunk size: 256.)
-
-[//]: # ([2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 250M contacts.)
-
-[//]: # ([2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 250M contacts.)
-
-[//]: # ([2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 250M contacts.)
-
-[//]: # ([2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Finished writing parquet file. Wrote 250M contacts.)
-
-[//]: # ([2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Total generation and write time: 45.0708714s.)
-
-[//]: # ([2025-07-03T18:23:11Z INFO  parquet_parallel_nested] Record Throughput: 22M records/sec)
-
-[//]: # ([2025-07-03T18:23:11Z INFO  parquet_parallel_nested] In-Memory Throughput: 1.13 GB/s)
-
-[//]: # ()
-
-[//]: # ( Performance counter stats for './target/release/parquet-parallel-nested':)
-
-[//]: # ()
-
-[//]: # ( 1,380,116,176,317      cycles                                                                  &#40;83.34%&#41;)
-
-[//]: # ( 2,854,183,038,000      instructions                     #    2.07  insn per cycle              &#40;83.32%&#41;)
-
-[//]: # (    36,862,140,938      cache-references                                                        &#40;83.36%&#41;)
-
-[//]: # (     3,787,813,422      cache-misses                     #   10.28% of all cache refs           &#40;83.32%&#41;)
-
-[//]: # (   527,304,886,022      branch-instructions                                                     &#40;83.30%&#41;)
-
-[//]: # (    11,521,613,424      branch-misses                    #    2.19% of all branches             &#40;83.36%&#41;)
-
-[//]: # ()
-
-[//]: # (      45.079519917 seconds time elapsed)
-
-[//]: # ()
-
-[//]: # (     300.597543000 seconds user)
-
-[//]: # (      28.455504000 seconds sys)
-
-[//]: # (```)
-
-[//]: # ()
-
-[//]: # (The size of the parquet files which contains 750 million contacts each created by 4 writer threads.)
-
-[//]: # ()
-
-[//]: # (```text)
-
-[//]: # (➜  rusty-doodles git:&#40;main&#41; ✗ ls contacts_*                                                                                                                                              dbu6)
-
-[//]: # (contacts_1.parquet  contacts_2.parquet  contacts_3.parquet  contacts_4.parquet)
-
-[//]: # (➜  rusty-doodles git:&#40;main&#41; ✗ ls contacts_* -lth                                                                                                                                         dbu6)
-
-[//]: # (-rw-rw-r-- 1 jcsherin jcsherin 7.5G Jul  3 18:23 contacts_2.parquet)
-
-[//]: # (-rw-rw-r-- 1 jcsherin jcsherin 7.5G Jul  3 18:23 contacts_3.parquet)
-
-[//]: # (-rw-rw-r-- 1 jcsherin jcsherin 7.5G Jul  3 18:23 contacts_1.parquet)
-
-[//]: # (-rw-rw-r-- 1 jcsherin jcsherin 7.5G Jul  3 18:23 contacts_4.parquet)
-
-[//]: # (```)
-
-[//]: # ()
-
-[//]: # (### Performance Analysis: String Generation Strategies)
-
-[//]: # ()
-
-[//]: # (The)
-
-[//]: # (`generate_name` method generates names with a high degree of duplication, where only ~25% of name are unique.)
-
-[//]: # (The goal is to reduce the millions of small, short-lived heap allocations by comparing the baseline &#40;no interning&#41;,)
-
-[//]: # (against two caching strategies: a global shared &#40;)
-
-[//]: # (`DashMap`&#41; string interner and a thread-local string interner.)
-
-[//]: # ()
-
-[//]: # (Counter-intuitively, both interning strategies led to significant performance regression compared to the baseline)
-
-[//]: # (version.)
-
-[//]: # ()
-
-[//]: # (The)
-
-[//]: # (`DashMap` version has cache-coherency issues due to multiple thread writers on shared data structure. The)
-
-[//]: # (thread-local version overcomes this problem, but the overhead it introduces in hashing,)
-
-[//]: # (`RefCell` borrow, branching)
-
-[//]: # (etc. proved to be more expensive than simply making more string allocations.)
-
-[//]: # ()
-
-[//]: # (The result is a lesson in what appeared to be an optimization target on paper &#40;a hot loop with many small)
-
-[//]: # (allocations&#41;, in practice is already optimal.)
-
-[//]: # ()
-
-[//]: # (#### Raw Data: Performance Comparison &#40;10M Run Size&#41;)
-
-[//]: # ()
-
-[//]: # (| Metric                           | Baseline        | Shared `DashMap` Interner | Thread-Local Interner |)
-
-[//]: # (|:---------------------------------|:----------------|:--------------------------|:----------------------|)
-
-[//]: # (| **Wall Time &#40;Elapsed&#41;**          | **`0.440 s`**   | `0.955 s` &#40;+117%&#41;         | `0.793 s` &#40;+80%&#41;      |)
-
-[//]: # (| **Record Throughput**            | **`23 M/s`**    | `11 M/s` &#40;-52%&#41;           | `14 M/s` &#40;-39%&#41;       |)
-
-[//]: # (| **In-Memory Throughput**         | **`1.18 GB/s`** | `0.55 GB/s` &#40;-53%&#41;        | `0.72 GB/s` &#40;-39%&#41;    |)
-
-[//]: # (|                                  |                 |                           |                       |)
-
-[//]: # (| **Instructions Per Cycle &#40;IPC&#41;** | **`2.13`**      | `1.10` &#40;-48%&#41;             | `1.11` &#40;-48%&#41;         |)
-
-[//]: # (| **Cache Miss Rate**              | **`11.39%`**    | `22.49%` &#40;+97%&#41;           | `15.91%` &#40;+40%&#41;       |)
-
-[//]: # (| **Branch Miss Rate**             | **`2.16%`**     | `2.75%` &#40;+27%&#41;            | `3.03%` &#40;+40%&#41;        |)
-
-[//]: # (|                                  |                 |                           |                       |)
-
-[//]: # (| **Total CPU Time &#40;User + Sys&#41;**  | `3.155 s`       | `7.188 s` &#40;+128%&#41;         | `9.068 s` &#40;+187%&#41;     |)
-
-[//]: # (| **User Time**                    | `2.834 s`       | `6.373 s`                 | `7.480 s`             |)
-
-[//]: # (| **System Time**                  | `0.320 s`       | `0.814 s`                 | `1.588 s`             |)
-
-[//]: # (|                                  |                 |                           |                       |)
-
-[//]: # (| **Cycles**                       | `13.4 B`        | `30.9 B` &#40;+130%&#41;          | `38.4 B` &#40;+186%&#41;      |)
-
-[//]: # (| **Instructions**                 | `28.6 B`        | `33.8 B` &#40;+18%&#41;           | `42.7 B` &#40;+49%&#41;       |)
-
-[//]: # (| **Cache References**             | `336 M`         | `649 M` &#40;+93%&#41;            | `772 M` &#40;+130%&#41;       |)
-
-[//]: # (| **Cache Misses**                 | `38.3 M`        | `146.0 M` &#40;+281%&#41;         | `122.9 M` &#40;+221%&#41;     |)
-
-[//]: # (| **Branch Instructions**          | `5.31 B`        | `6.09 B` &#40;+15%&#41;           | `7.50 B` &#40;+41%&#41;       |)
-
-[//]: # (| **Branch Misses**                | `115 M`         | `167 M` &#40;+45%&#41;            | `227 M` &#40;+97%&#41;        |)
-
-[//]: # ()
