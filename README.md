@@ -13,13 +13,14 @@ A collection of one-off projects built using database building blocks:
 ## Projects (latest first)
 
 * Embed a full-text index within a Parquet file and use [Datafusion] to accelerate
-wildcard `LIKE` queries. See the [parquet-embed-tantivy] README for more details.
+  wildcard
+  `LIKE` queries. See the [README for parquet-embed-tantivy] more details.
 
 * A fast, parallel, [Zipfian-like] Parquet file generator for nested data
-  structures. See the [parquet-nested-parallel] README for more details.
+  structures. See the [README For parquet-nested-parallel] more details.
 
-[parquet-nested-parallel]: /crates/parquet-nested-parallel/README.md
+[README for parquet-nested-parallel]: /crates/parquet-nested-parallel/README.md
 
-[parquet-embed-tantivy]: /crates/parquet-embed-tantivy/README.md
+[README for parquet-embed-tantivy]: /crates/parquet-embed-tantivy/README.md
 
 [Zipfian-like]: https://en.wikipedia.org/wiki/Zipf%27s_law

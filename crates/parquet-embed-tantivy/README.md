@@ -171,3 +171,11 @@ The geometric mean of speedup across 36 queries used for testing is 1.68X.
 │        0 │ 52060 │     0.5206% │  63.26ms │ 245.70ms │ +182.44ms │ 3.88X (slowdown) │
 └──────────┴───────┴─────────────┴──────────┴──────────┴───────────┴──────────────────┘
 ```
+
+[Embedding User-Defined Indexes in Apache Parquet Files]: https://datafusion.apache.org/blog/2025/07/14/user-defined-parquet-indexes/
+
+[Tantivy full-text search index]: https://github.com/quickwit-oss/tantivy
+
+[TableProvider]: https://datafusion.apache.org/library-user-guide/custom-table-providers.html#table-provider-and-scan
+
+[Tantivy Query]: https://docs.rs/tantivy/latest/tantivy/query/trait.Query.html
