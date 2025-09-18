@@ -1,24 +1,25 @@
+# Embedding a Tantivy Index In Parquet
+
 > Parquet tolerates unknown bytes within the file body and permits arbitrary key/value pairs in its footer metadata. These two features enable embedding user-defined indexes directly in the file—no extra files, no format forks, and no compatibility breakage.
 >
-> [Embedding User-Defined Indexes in Apache Parquet Files]
+> From DataFusion blog post: [Embedding User-Defined Indexes in Apache Parquet Files]
 
+This demo extends Parquet with a [Tantivy full-text search index]. A custom
+[TableProvider] implementation uses the embedded full-text index to optimize
+wildcard `LIKE` predicates in a query. For example:
 
-This is a demo of extending Parquet with a user-defined index. Here we embed a
-[Tantivy full-text search index] in a Parquet file and use it to optimize
-wildcard `LIKE` queries. For example:
-
-```
+```sql
 SELECT *
-  FROM t
- WHERE title LIKE '%dairy cow%'
+FROM t
+WHERE title LIKE '%dairy cow%'
 ```
 
-While DataFusion applies predicate pushdown to the Parquet source, a predicate
-like `title LIKE '%dairy cow%` cannot be used for pruning row groups or data
-pages. This results in a full table scan, after which a `FilterExec` operator
-finds the rows that match the predicate.
+In the above query, the predicate: `title LIKE '%dairy cow%'` does not help
+predicate pushdown to skip any rows. The leading and trailing wildcards means
+a substring match can exist anywhere inside a string value. Therefore, a full
+table scan is required to filter matching rows.
 
-The baseline physical plan looks like this:
+In this case the baseline physical plan looks like this:
 
 ```text
 +---------------+-------------------------------+
@@ -48,6 +49,34 @@ The baseline physical plan looks like this:
 |               |                               |
 +---------------+-------------------------------+
 ```
+
+## Use the Index Results to Rewrite the Physical Plan
+
+During query execution we use the embedded full-text index to find matches. This
+is done by extracting the pattern string from the wildcard `LIKE` predicate and
+then rewriting it into a [Tantivy Query].
+
+For example,
+`title LIKE '%dairy cow%'` is transformed into the Tantivy search query:
+
+```rust
+PhraseQuery::new(vec![
+    Term::from_field_text(title_field, "dairy"),
+    Term::from_field_text(title_field, "cow"),
+])
+```
+
+The results from Tantivy are resolved into a set of integer `id` column values.
+The original predicate: `title LIKE '%dairy cow%'` can now be transformed into
+a predicate pushdown friendly predicate: `id IN (...)` which will filter the
+same rows in the Parquet file.
+
+This predicate: `id IN (...)` can be now be used while scanning the Parquet file
+to skip data pages and row groups significantly reducing both decoding compute
+and I/O.
+
+### Building the Full-Text Index
+
 
 We extend DataFusion with a custom [TableProvider] which rewrites the search
 pattern in the LIKE `predicate` into a [Tantivy Query]. The index hits resolve
