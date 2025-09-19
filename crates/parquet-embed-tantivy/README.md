@@ -4,22 +4,34 @@
 >
 > From DataFusion blog post: [Embedding User-Defined Indexes in Apache Parquet Files]
 
-This demo extends Parquet with a [Tantivy full-text search index]. A custom
-[TableProvider] implementation uses the embedded full-text index to optimize
-wildcard `LIKE` predicates in a query. For example:
+This demo extends a Parquet file by embedding a [Tantivy full-text search index]
+inside it. A custom [DataFusion TableProvider] implementation uses the
+embedded full-text index to optimize wildcard `LIKE` predicates.
+
+For example:
 
 ```sql
-SELECT *
+SELECT id,
+       title
 FROM t
 WHERE title LIKE '%dairy cow%'
 ```
 
-In the above query, the predicate: `title LIKE '%dairy cow%'` does not help
-predicate pushdown to skip any rows. The leading and trailing wildcards means
-a substring match can exist anywhere inside a string value. Therefore, a full
-table scan is required to filter matching rows.
+## Leading Wildcard Prevents Predicate Pushdown
 
-In this case the baseline physical plan looks like this:
+The predicate
+`title LIKE '%dairy cow%'` is not [Sargable (Search ARGument ABLE)],
+because it contains a leading wildcard (%). A leading wildcard means the match
+can start anywhere. Therefore, it cannot use the column min/max statistics to
+prune row groups. This prevents predicate pushdown, forcing a full table scan
+where a substring match has to be performed for every row.
+
+While leading wildcard forces a full table scan, the `%dairy cow%` pattern with
+both leading and trailing wildcard represents the worst-case scenario. It
+requires a more computationally expensive check to see if a match exists anywhere
+within the string, for every single row.
+
+Here is the physical plan for this query:
 
 ```text
 +---------------+-------------------------------+
@@ -49,6 +61,87 @@ In this case the baseline physical plan looks like this:
 |               |                               |
 +---------------+-------------------------------+
 ```
+
+We can see in the above physical plan that even though the predicate is pushdown
+to the Parquet data source, a `FilterExec` with the exact same predicate sits
+above it to guarantee non-matching rows are filtered out.
+
+## Query Optimization using Full-Text Index
+
+The steps involved in optimizing the query are:
+
+1. Extract the pattern `dairy cow` from the predicate:
+   `title LIKE '%dairy cow%'`.
+2. Tokenize: `[dairy, cow]` for creating a Tantivy full-text index query.
+3. Search the Tantivy full-text index for matches.
+4. Resolve the matches into a list of `id` column values which are sargable.
+5. Rewrite `title LIKE '%dairy cow%` into `id IN (...)` format, which can now
+   use the min/max statistics on the
+   `id` column to prune row groups and data pages
+   avoiding a full-table scan of the Parquet data source.
+
+The optimized plan now looks like this:
+
+```text
++---------------+-------------------------------+
+| plan_type     | plan                          |
++---------------+-------------------------------+
+| physical_plan | ┌───────────────────────────┐ |
+|               | │       DataSourceExec      │ |
+|               | │    --------------------   │ |
+|               | │         files: 12         │ |
+|               | │      format: parquet      │ |
+|               | │                           │ |
+|               | │         predicate:        │ |
+|               | │  id IN (1979290, 4565514, │ |
+|               | │          9794628)         │ |
+|               | └───────────────────────────┘ |
+|               |                               |
++---------------+-------------------------------+
+```
+
+The physical plan now contains the rewritten predicate, where the values are
+matching IDs for `dairy cow` found in the full-text index. This new sargable
+predicate can utilize the min/max statistics on the `id` column to prune row
+groups and data pages, avoiding a full table scan.
+
+### Short-Circuiting Zero Matches
+
+```sql
+SELECT id,
+       title
+FROM t
+WHERE title LIKE '%cow cow%'
+```
+
+If the full text index yields no matches, and since the query contains no other
+predicates there will be zero rows in the final result. This case is optimized
+as a no-op, and does not attempt to read the Parquet data source.
+
+```text
++----+-------+
+| id | title |
++----+-------+
++----+-------+
+0 row(s) fetched.
+```
+
+In this case the optimized plan looks like this:
+
+```text
++---------------+-------------------------------+
+| plan_type     | plan                          |
++---------------+-------------------------------+
+| physical_plan | ┌───────────────────────────┐ |
+|               | │         EmptyExec         │ |
+|               | └───────────────────────────┘ |
+|               |                               |
++---------------+-------------------------------+
+```
+
+In the test cases which return zero rows, this results in a speedup in the range
+of 2X to 70X. The variability arises from the time it takes to complete a full-text
+index search with no matches returned for different queries.
 
 ## Use the Index Results to Rewrite the Physical Plan
 
@@ -176,6 +269,8 @@ The geometric mean of speedup across 36 queries used for testing is 1.68X.
 
 [Tantivy full-text search index]: https://github.com/quickwit-oss/tantivy
 
-[TableProvider]: https://datafusion.apache.org/library-user-guide/custom-table-providers.html#table-provider-and-scan
+[DataFusion TableProvider]: https://datafusion.apache.org/library-user-guide/custom-table-providers.html#table-provider-and-scan
 
 [Tantivy Query]: https://docs.rs/tantivy/latest/tantivy/query/trait.Query.html
+
+[Sargable (Search ARGument ABLE)]: https://en.wikipedia.org/wiki/Sargable
