@@ -290,6 +290,95 @@ TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:resolv
 TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index: parquet_embed_tantivy::index: close time.busy=30.8ms time.idle=167ns query_id=7 sql=SELECT * FROM t WHERE title LIKE '%runtime runtime%' run_type="optimized"
 ```
 
+## About Benchmarking Data
+
+### 1. Query Generation
+
+The benchmarks were run against a deterministic set of queries. Each query uses
+a two-word search pattern generated from a pre-defined list of six control words
+that are known to be present in the dataset.
+
+```rust
+format!("SELECT * FROM t WHERE title LIKE '%{first} {second}%'");
+```
+
+A cartesian product is performed on the list of six control words to create every
+possible two-word pairing, which results in 36 unique queries. The generated
+queries and their order are deterministic across all test runs.
+
+Here is the full list of queries used for the benchmark:
+
+```text
+Query  0: SELECT * FROM t WHERE title LIKE '%concurrency concurrency%'
+Query  1: SELECT * FROM t WHERE title LIKE '%concurrency runtime%'
+Query  2: SELECT * FROM t WHERE title LIKE '%concurrency indexing%'
+Query  3: SELECT * FROM t WHERE title LIKE '%concurrency normalization%'
+Query  4: SELECT * FROM t WHERE title LIKE '%concurrency atomics%'
+Query  5: SELECT * FROM t WHERE title LIKE '%concurrency idempotency%'
+Query  6: SELECT * FROM t WHERE title LIKE '%runtime concurrency%'
+Query  7: SELECT * FROM t WHERE title LIKE '%runtime runtime%'
+Query  8: SELECT * FROM t WHERE title LIKE '%runtime indexing%'
+Query  9: SELECT * FROM t WHERE title LIKE '%runtime normalization%'
+Query 10: SELECT * FROM t WHERE title LIKE '%runtime atomics%'
+Query 11: SELECT * FROM t WHERE title LIKE '%runtime idempotency%'
+Query 12: SELECT * FROM t WHERE title LIKE '%indexing concurrency%'
+Query 13: SELECT * FROM t WHERE title LIKE '%indexing runtime%'
+Query 14: SELECT * FROM t WHERE title LIKE '%indexing indexing%'
+Query 15: SELECT * FROM t WHERE title LIKE '%indexing normalization%'
+Query 16: SELECT * FROM t WHERE title LIKE '%indexing atomics%'
+Query 17: SELECT * FROM t WHERE title LIKE '%indexing idempotency%'
+Query 18: SELECT * FROM t WHERE title LIKE '%normalization concurrency%'
+Query 19: SELECT * FROM t WHERE title LIKE '%normalization runtime%'
+Query 20: SELECT * FROM t WHERE title LIKE '%normalization indexing%'
+Query 21: SELECT * FROM t WHERE title LIKE '%normalization normalization%'
+Query 22: SELECT * FROM t WHERE title LIKE '%normalization atomics%'
+Query 23: SELECT * FROM t WHERE title LIKE '%normalization idempotency%'
+Query 24: SELECT * FROM t WHERE title LIKE '%atomics concurrency%'
+Query 25: SELECT * FROM t WHERE title LIKE '%atomics runtime%'
+Query 26: SELECT * FROM t WHERE title LIKE '%atomics indexing%'
+Query 27: SELECT * FROM t WHERE title LIKE '%atomics normalization%'
+Query 28: SELECT * FROM t WHERE title LIKE '%atomics atomics%'
+Query 29: SELECT * FROM t WHERE title LIKE '%atomics idempotency%'
+Query 30: SELECT * FROM t WHERE title LIKE '%idempotency concurrency%'
+Query 31: SELECT * FROM t WHERE title LIKE '%idempotency runtime%'
+Query 32: SELECT * FROM t WHERE title LIKE '%idempotency indexing%'
+Query 33: SELECT * FROM t WHERE title LIKE '%idempotency normalization%'
+Query 34: SELECT * FROM t WHERE title LIKE '%idempotency atomics%'
+Query 35: SELECT * FROM t WHERE title LIKE '%idempotency idempotency%'
+```
+
+### 2. Generated Parquet Data
+
+The Parquet file used for benchmarking contains 10 million programmatically
+generated rows, with an embedded Tantivy full-text index of the same size. The
+`title` column values are randomly generated. However, given the same initial
+seed the generation process is fully deterministic and reproducible.
+
+Here is the statistics for the `title` column in the dataset used for
+benchmarking:
+
+```text
++------------+------------+------------+----------------+----------------+----------------+-------------+
+| min_length | max_length | avg_length | min_word_count | max_word_count | avg_word_count | cardinality |
++------------+------------+------------+----------------+----------------+----------------+-------------+
+| 5          | 120        | 41.7164603 | 3              | 13             | 5.8655978      | 9163033     |
++------------+------------+------------+----------------+----------------+----------------+-------------+
+```
+
+This is the SQL query used for determining the statistics of the `title` column:
+
+```sql
+SELECT MIN(LENGTH(title))                             AS min_length,
+       MAX(LENGTH(title))                             AS max_length,
+       AVG(LENGTH(title))                             AS avg_length,
+       MIN(ARRAY_LENGTH(STRING_TO_ARRAY(title, ' '))) AS min_word_count,
+       MAX(ARRAY_LENGTH(STRING_TO_ARRAY(title, ' '))) AS max_word_count,
+       AVG(ARRAY_LENGTH(STRING_TO_ARRAY(title, ' '))) AS avg_word_count,
+       COUNT(DISTINCT title)                          AS cardinality
+FROM
+    'output/docs_with_fts_index_10000000.parquet';
+```
+
 ## Summary
 
 ```text
