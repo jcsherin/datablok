@@ -202,7 +202,67 @@ larger than the parquet file without the index.
  95M    output/docs_with_fts_index_1000000.parquet
 ```
 
-## Results
+## Performance
+
+### 1. Full-Text Index Setup Cost
+
+There is a one-time cost for reading the embedded full-text from the Parquet file
+and initializing it for querying. It is ~130ms (~411 MB) for a tantivy index
+containing, 10 million documents.
+
+```text
+TRACE open:read_directory:index_offset: parquet_embed_tantivy::index: close time.busy=15.7µs time.idle=750ns
+TRACE open:read_directory:deserialize_header: parquet_embed_tantivy::index: close time.busy=116µs time.idle=417ns
+TRACE open:read_directory:deserialize_data_block: parquet_embed_tantivy::index: close time.busy=127ms time.idle=624ns
+TRACE open:read_directory: parquet_embed_tantivy::index: close time.busy=128ms time.idle=416ns
+```
+
+### 2. Low Selectivity Queries are a Bottleneck
+
+If the full-text index matches a lot of rows, the performance bottleneck becomes
+resolving the matching documents to a list of `id` values. A full-table scan has
+a better, stable performance in this case.
+
+```text
+┌──────────┬──────────┬──────────┬───────────┬───────┬─────────────┬──────────────────┐
+│ Query ID │ Baseline │ With FTS │      Diff │  Rows │ Selectivity │ Perf Change      │
+├──────────┼──────────┼──────────┼───────────┼───────┼─────────────┼──────────────────┤
+│       19 │  59.03ms │  55.96ms │   -3.07ms │  1380 │     0.0138% │ 1.05X            │
+│        8 │  64.94ms │  96.76ms │  +31.82ms │  6908 │     0.0691% │ 1.49X (slowdown) │
+│       13 │  62.94ms │  96.77ms │  +33.83ms │  6768 │     0.0677% │ 1.54X (slowdown) │
+│        2 │  63.75ms │ 103.61ms │  +39.85ms │ 19385 │     0.1938% │ 1.63X (slowdown) │
+│       12 │  64.41ms │ 106.60ms │  +42.19ms │ 19564 │     0.1956% │ 1.66X (slowdown) │
+│        1 │  67.10ms │ 156.67ms │  +89.57ms │ 38758 │     0.3876% │ 2.34X (slowdown) │
+│        6 │  65.36ms │ 156.17ms │  +90.81ms │ 38772 │     0.3877% │ 2.39X (slowdown) │
+│        0 │  63.34ms │ 238.08ms │ +174.75ms │ 52060 │     0.5206% │ 3.76X (slowdown) │
+└──────────┴──────────┴──────────┴───────────┴───────┴─────────────┴──────────────────┘
+Slow Queries: 7 of 8
+Path: output/docs_with_fts_index_10000000.parquet
+Parquet Row Count: 10000000
+```
+
+In this trace for query 0 which returns 52060 rows, search the full-text completed
+in ~84ms and resolving the search results into a list of
+`id` values takes another
+~60ms. The total time spend in full-text search is ~145ms, whereas a full-table
+scan completes in ~60ms.
+
+```text
+TRACE query_comparison:run:execute_sql:scan:extract_title_like_pattern: parquet_embed_tantivy::index: close time.busy=166ns time.idle=417ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:create_index_query: parquet_embed_tantivy::index: close time.busy=18.2µs time.idle=126ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:search_execute_hits_and_count: parquet_embed_tantivy::index: close time.busy=83.6ms time.idle=83.0ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:resolve_hits_to_id_values: parquet_embed_tantivy::index: close time.busy=59.5ms time.idle=208ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index: parquet_embed_tantivy::index: close time.busy=145ms time.idle=166ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
+```
+### 3. Creating a Large IN Predicate is Fast
+
+In DataFusion the time taken to create an `id IN (...)` predicate for 52K rows
+and creating the physical plan completes in ~6ms.
+
+```text
+TRACE query_comparison:run:execute_sql:scan:ids_to_predicate: parquet_embed_tantivy::index: close time.busy=6.27ms time.idle=1.54µs query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:create_optimized_physical_plan: parquet_embed_tantivy::index: close time.busy=114µs time.idle=459ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
+```
 
 The geometric mean of speedup across 36 queries used for testing is 1.68X.
 
