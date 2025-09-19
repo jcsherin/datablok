@@ -17,7 +17,7 @@ FROM t
 WHERE title LIKE '%dairy cow%'
 ```
 
-## Leading Wildcard Prevents Predicate Pushdown
+## Leading Wildcard Forces a Full-Table Scan
 
 The predicate
 `title LIKE '%dairy cow%'` is not [Sargable (Search ARGument ABLE)],
@@ -68,17 +68,32 @@ above it to guarantee non-matching rows are filtered out.
 
 ## Query Optimization using Full-Text Index
 
-The steps involved in optimizing the query are:
+The core of the optimization is using the full-text index search results to
+rewrite the original predicate into a highly efficient sargable one.
 
-1. Extract the pattern `dairy cow` from the predicate:
-   `title LIKE '%dairy cow%'`.
-2. Tokenize: `[dairy, cow]` for creating a Tantivy full-text index query.
-3. Search the Tantivy full-text index for matches.
-4. Resolve the matches into a list of `id` column values which are sargable.
-5. Rewrite `title LIKE '%dairy cow%` into `id IN (...)` format, which can now
-   use the min/max statistics on the
-   `id` column to prune row groups and data pages
-   avoiding a full-table scan of the Parquet data source.
+### 1. Transforming LIKE Predicate into a Tantivy Query
+
+First, the pattern is extracted from the original predicate. For example:
+`title LIKE '%dairy cow%'`, is converted into a list of search terms:
+`[dairy ,cow]`. This list is then use to create a [Tantivy Query].
+
+```rust
+PhraseQuery::new(vec![
+    Term::from_field_text(title_field, "dairy"),
+    Term::from_field_text(title_field, "cow"),
+])
+```
+
+### 2. Creating a Sargable Predicate
+
+The search results from Tantivy are a collection of matching documents. We
+retrieve the stored `id` values from these documents and use them to rewrite the
+original predicate `title LIKE '%dairy cow%'` into a sargable
+`id IN (...)` predicate.
+
+This new predicate can now be pushed down into the Parquet data source, which
+uses the min/max statistics on the `id` column to prune row groups and data
+pages, avoiding a full table scan.
 
 The optimized plan now looks like this:
 
@@ -100,12 +115,7 @@ The optimized plan now looks like this:
 +---------------+-------------------------------+
 ```
 
-The physical plan now contains the rewritten predicate, where the values are
-matching IDs for `dairy cow` found in the full-text index. This new sargable
-predicate can utilize the min/max statistics on the `id` column to prune row
-groups and data pages, avoiding a full table scan.
-
-### Short-Circuiting Zero Matches
+### Special Case: Short-Circuiting Zero Matches
 
 ```sql
 SELECT id,
@@ -142,82 +152,6 @@ In this case the optimized plan looks like this:
 In the test cases which return zero rows, this results in a speedup in the range
 of 2X to 70X. The variability arises from the time it takes to complete a full-text
 index search with no matches returned for different queries.
-
-### Transforming LIKE Predicate into a Tantivy Query
-
-From the predicate `title LIKE '%dairy cow%'`, the pattern is extracted and
-converted into a list of search terms: `[dairy, cow]`, which is then used to
-create a [Tantivy Query].
-
-```rust
-PhraseQuery::new(vec![
-    Term::from_field_text(title_field, "dairy"),
-    Term::from_field_text(title_field, "cow"),
-])
-```
-
-### Creating a Sargable Predicate
-
-The results returned by the full-text index search are an unordered collection
-of Tantivy documents. We use Tantivy to retrieve the stored `id` values for the
-matching documents.
-
-Now we can rewrite the original predicate: `title LIKE '%dairy cow%'` into a
-sargable predicate: `id IN (...)`  using the list of `id` value returned from
-the full-text index.
-
-This rewritten predicate can use the min/max statistics to prune row groups,
-and data pages while scanning the Parquet data source.
-
-### Building the Full-Text Index
-
-When building the index, we include both the `title` (text) column and the
-`id` (integer) column in the Tantivy document.
-
-```rust
-let mut schema_builder = SchemaBuilder::new();
-
-schema_builder.add_u64_field("id", INDEXED | STORED);
-schema_builder.add_text_field("title", TEXT);
-
-schema_builder.build();
-```
-
-Typically, the original string values are discarded after indexing the terms.
-When querying the index, and matches are returned, we then use the `id` column
-to retrieve the complete matching text values stored in the Parquet file.
-
-### Transformed Physical Plan
-
-The steps involved in optimizing the query are:
-
-1. Extract the search pattern from the wildcard `LIKE` predicate.
-2. Tokenize the pattern to construct a Tantivy search query.
-3. Search the full-text index.
-4. From the search results returned by Tantivy, retrieve the stored `id` values.
-5. Create a new predicate:
-   `id IN (...)` which contains the values returned from the previous step.
-6. Pushdown this predicate into the Parquet data source for skipping rows.
-
-The optimized plan now looks like this:
-
-```text
-+---------------+-------------------------------+
-| plan_type     | plan                          |
-+---------------+-------------------------------+
-| physical_plan | ┌───────────────────────────┐ |
-|               | │       DataSourceExec      │ |
-|               | │    --------------------   │ |
-|               | │         files: 12         │ |
-|               | │      format: parquet      │ |
-|               | │                           │ |
-|               | │         predicate:        │ |
-|               | │  id IN (1979290, 4565514, │ |
-|               | │          9794628)         │ |
-|               | └───────────────────────────┘ |
-|               |                               |
-+---------------+-------------------------------+
-```
 
 ## Results
 
