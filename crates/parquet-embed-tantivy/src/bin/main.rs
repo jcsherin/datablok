@@ -135,11 +135,19 @@ async fn main() -> Result<()> {
     let total_row_count =
         count_parquet_rows(&ctx_optimized, args.input_dir.to_str().unwrap()).await?;
 
+    let geometric_mean_speedup = calculate_geometric_mean(&results);
+    println!(
+        "Geometric mean of speedup across all queries: {:.2}X",
+        geometric_mean_speedup
+    );
+
     print_summary_table(results, total_row_count);
     println!(
         "Parquet: {} row count: {total_row_count}",
         args.input_dir.to_str().unwrap()
     );
+
+
 
     Ok(())
 }
@@ -225,6 +233,7 @@ fn print_summary_table(mut results: Vec<(QueryComparisonMetrics, &str)>, parquet
 
     println!("{table}");
     println!("Slow Queries: {slow_query_count} of {query_count}");
+
 }
 
 async fn count_parquet_rows(ctx: &SessionContext, path: &str) -> Result<usize> {
@@ -376,4 +385,28 @@ async fn run_comparison(
     }
 
     Ok(metrics)
+}
+
+/// Calculates the geometric mean of the performance changes.
+///
+/// Returns `1.0` if the input is empty.
+fn calculate_geometric_mean(results: &[(QueryComparisonMetrics, &str)]) -> f32 {
+    if results.is_empty() {
+        return 1.0;
+    }
+
+    let n = results.len() as f32;
+
+    let log_sum: f32 = results
+        .iter()
+        .map(|(metrics, _)| {
+            let ratio = match metrics.get_change_in_performance() {
+                PerfChange::Speedup(val) => val,
+                PerfChange::Slowdown(val) => 1.0 / val,
+            };
+            ratio.ln()
+        })
+        .sum();
+
+    (log_sum / n).exp()
 }
