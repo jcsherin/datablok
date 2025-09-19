@@ -165,6 +165,43 @@ Path: output/docs_with_fts_index_10000000.parquet
 Parquet Row count: 10000000
 ```
 
+## Parquet File on Disk
+
+The table schema used for generating the Parquet file is:
+
+```text
++-------------+-----------+-------------+
+| column_name | data_type | is_nullable |
++-------------+-----------+-------------+
+| id          | UInt64    | NO          |
+| title       | Utf8View  | YES         |
++-------------+-----------+-------------+
+```
+
+The documents indexed in Tantivy have an identical schema:
+
+```rust
+let mut schema_builder = SchemaBuilder::new();
+
+schema_builder.add_u64_field("id", INDEXED | STORED);
+schema_builder.add_text_field("title", TEXT);
+
+schema_builder.build();
+```
+
+The Parquet file with the embedded Tantivy full-text index is consistently ~80%
+larger than the parquet file without the index.
+
+```text
+// 10 million rows
+515M    output/docs_10000000.parquet
+926M    output/docs_with_fts_index_10000000.parquet
+
+// 1 million rows
+ 52M    output/docs_1000000.parquet
+ 95M    output/docs_with_fts_index_1000000.parquet
+```
+
 ## Results
 
 The geometric mean of speedup across 36 queries used for testing is 1.68X.
