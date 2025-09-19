@@ -143,14 +143,11 @@ In the test cases which return zero rows, this results in a speedup in the range
 of 2X to 70X. The variability arises from the time it takes to complete a full-text
 index search with no matches returned for different queries.
 
-## Use the Index Results to Rewrite the Physical Plan
+### Transforming LIKE Predicate into a Tantivy Query
 
-During query execution we use the embedded full-text index to find matches. This
-is done by extracting the pattern string from the wildcard `LIKE` predicate and
-then rewriting it into a [Tantivy Query].
-
-For example,
-`title LIKE '%dairy cow%'` is transformed into the Tantivy search query:
+From the predicate `title LIKE '%dairy cow%'`, the pattern is extracted and
+converted into a list of search terms: `[dairy, cow]`, which is then used to
+create a [Tantivy Query].
 
 ```rust
 PhraseQuery::new(vec![
@@ -159,14 +156,18 @@ PhraseQuery::new(vec![
 ])
 ```
 
-The results from Tantivy are resolved into a set of integer `id` column values.
-The original predicate: `title LIKE '%dairy cow%'` can now be transformed into
-a predicate pushdown friendly predicate: `id IN (...)` which will filter the
-same rows in the Parquet file.
+### Creating a Sargable Predicate
 
-This predicate: `id IN (...)` can be now be used while scanning the Parquet file
-to skip data pages and row groups significantly reducing both decoding compute
-and I/O.
+The results returned by the full-text index search are an unordered collection
+of Tantivy documents. We use Tantivy to retrieve the stored `id` values for the
+matching documents.
+
+Now we can rewrite the original predicate: `title LIKE '%dairy cow%'` into a
+sargable predicate: `id IN (...)`  using the list of `id` value returned from
+the full-text index.
+
+This rewritten predicate can use the min/max statistics to prune row groups,
+and data pages while scanning the Parquet data source.
 
 ### Building the Full-Text Index
 
