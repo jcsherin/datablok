@@ -23,8 +23,8 @@ The predicate
 `title LIKE '%dairy cow%'` is not [Sargable (Search ARGument ABLE)],
 because it contains a leading wildcard (%). A leading wildcard means the match
 can start anywhere. Therefore, it cannot use the column min/max statistics to
-prune row groups. This prevents predicate pushdown, forcing a full table scan
-where a substring match has to be performed for every row.
+prune row groups. This makes predicate pushdown ineffective, forcing a full
+table scan where a substring match has to be performed for every row.
 
 While leading wildcard forces a full table scan, the `%dairy cow%` pattern with
 both leading and trailing wildcard represents the worst-case scenario. It
@@ -146,25 +146,6 @@ In this case the optimized plan looks like this:
 +---------------+-------------------------------+
 ```
 
-In the test cases which return zero rows, this results in a maximum speedup of
-upto ~70X. The variability in speedup corresponds to the differences in the time
-it takes for full-text search to complete for different search terms.
-
-```text
-┌──────────┬──────────┬──────────┬──────────┬──────┬─────────────┬─────────────┐
-│ Query ID │ Baseline │ With FTS │     Diff │ Rows │ Selectivity │ Perf Change │
-├──────────┼──────────┼──────────┼──────────┼──────┼─────────────┼─────────────┤
-│       35 │  55.81ms │ 769.46µs │ -55.04ms │    0 │     0.0000% │ 72.53X      │
-│       28 │  65.03ms │   2.06ms │ -62.98ms │    0 │     0.0000% │ 31.60X      │
-│       21 │  56.71ms │   3.63ms │ -53.08ms │    0 │     0.0000% │ 15.61X      │
-│       14 │  61.57ms │  16.56ms │ -45.01ms │    0 │     0.0000% │ 3.72X       │
-│        7 │  63.89ms │  32.86ms │ -31.02ms │    0 │     0.0000% │ 1.94X       │
-└──────────┴──────────┴──────────┴──────────┴──────┴─────────────┴─────────────┘
-Slow Queries: 0 of 5
-Path: output/docs_with_fts_index_10000000.parquet
-Parquet Row count: 10000000
-```
-
 ## Parquet File on Disk
 
 The table schema used for generating the Parquet file is:
@@ -207,8 +188,8 @@ larger than the parquet file without the index.
 ### 1. Full-Text Index Setup Cost
 
 There is a one-time cost for reading the embedded full-text from the Parquet file
-and initializing it for querying. It is ~130ms (~411 MB) for a tantivy index
-containing, 10 million documents.
+and initializing it for querying. For a tantivy index containing 10 million
+documents, it takes ~130ms (~411 MB).
 
 ```text
 TRACE open:read_directory:index_offset: parquet_embed_tantivy::index: close time.busy=15.7µs time.idle=750ns
@@ -286,15 +267,9 @@ Path: output/docs_with_fts_index_10000000.parquet
 Parquet Row Count: 10000000
 ```
 
-The variability comes from the time it takes Tantivy the determine that search
-term has no matches.
-
-When examining trace for slowest in this group which is query 7, we can see that
-querying the Tantivy full-text index takes ~30ms to complete. This is ~100% of
-the time for executing query 7.
-
-For example, Query 35 (~70X speedup) is fast because the index search completes
-in 669µs.
+The variability comes from the time it takes Tantivy to determine that search
+term has no matches. For example, Query 35 (~70X speedup) is fast because the
+index search completes in 669µs.
 
 ```text
 TRACE query_comparison:run:execute_sql:scan:extract_title_like_pattern: parquet_embed_tantivy::index: close time.busy=167ns time.idle=125ns query_id=35 sql=SELECT * FROM t WHERE title LIKE '%idempotency idempotency%' run_type="optimized"
@@ -303,8 +278,9 @@ TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:search
 TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:resolve_hits_to_id_values: parquet_embed_tantivy::index: close time.busy=333ns time.idle=126ns query_id=35 sql=SELECT * FROM t WHERE title LIKE '%idempotency idempotency%' run_type="optimized"
 TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index: parquet_embed_tantivy::index: close time.busy=669µs time.idle=124ns query_id=35 sql=SELECT * FROM t WHERE title LIKE '%idempotency idempotency%' run_type="optimized"
 ```
-On the other hand, Query 7 (2X speedup) takes ~30ms, which accounts for nearly
-100% of the total query time.
+
+On the other hand, for Query 7 (2X speedup), the full-text index search takes ~30ms
+to complete, which accounts for nearly 100% of the total query execution time.
 
 ```text
 TRACE query_comparison:run:execute_sql:scan:extract_title_like_pattern: parquet_embed_tantivy::index: close time.busy=166ns time.idle=334ns query_id=7 sql=SELECT * FROM t WHERE title LIKE '%runtime runtime%' run_type="optimized"
