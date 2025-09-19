@@ -384,52 +384,65 @@ FROM
 All measurements were run on Apple M3 Pro (36 GB RAM, NVMe SSD). A warm-up run
 is performed before the timed measurements to populate the OS page cache.
 
-## Summary
+## Results Summary
+
+The geometric mean of speedup across all queries is 1.90X. For a typical query
+this translates into a ~47% reduction in query execution time. 28 of 36 queries
+finished faster, while 8 queries ran slower.
+
+The optimization is effective for highly selective queries (returning only few
+or zero results), delivering up to a 80X speedup. It begins to underperform a
+full-table scan when the number of matching rows become larger. In this dataset
+this happens at a selectivity of ~0.04% or higher.
+
+The full table scan substring matching performance is stable across all 36
+queries.
+
+_(The Parquet dataset contains 10 million rows.)_
 
 ```text
 ┌──────────┬──────────┬──────────┬───────────┬───────┬─────────────┬──────────────────┐
 │ Query ID │ Baseline │ With FTS │      Diff │  Rows │ Selectivity │ Perf Change      │
 ├──────────┼──────────┼──────────┼───────────┼───────┼─────────────┼──────────────────┤
-│       35 │  58.34ms │ 722.75µs │  -57.62ms │     0 │     0.0000% │ 80.72X           │
-│       28 │  61.37ms │   2.02ms │  -59.35ms │     0 │     0.0000% │ 30.36X           │
-│       34 │  59.82ms │   2.98ms │  -56.84ms │     3 │     0.0000% │ 20.10X           │
-│       29 │  61.41ms │   3.85ms │  -57.56ms │     9 │     0.0001% │ 15.97X           │
-│       21 │  54.10ms │   3.60ms │  -50.50ms │     0 │     0.0000% │ 15.03X           │
-│       33 │  63.92ms │   5.18ms │  -58.74ms │    12 │     0.0001% │ 12.34X           │
-│       23 │  63.74ms │   5.65ms │  -58.09ms │    13 │     0.0001% │ 11.29X           │
-│       14 │  62.00ms │  16.84ms │  -45.16ms │     0 │     0.0000% │ 3.68X            │
-│        7 │  62.92ms │  32.59ms │  -30.33ms │     0 │     0.0000% │ 1.93X            │
-│       32 │  65.38ms │  38.23ms │  -27.15ms │    63 │     0.0006% │ 1.71X            │
-│       17 │  65.05ms │  39.85ms │  -25.21ms │    65 │     0.0007% │ 1.63X            │
-│       11 │  61.52ms │  39.25ms │  -22.27ms │   123 │     0.0012% │ 1.57X            │
-│       27 │  62.14ms │  40.76ms │  -21.38ms │    75 │     0.0008% │ 1.52X            │
-│       31 │  63.06ms │  41.42ms │  -21.64ms │   158 │     0.0016% │ 1.52X            │
-│       22 │  57.60ms │  37.94ms │  -19.66ms │    58 │     0.0006% │ 1.52X            │
-│       16 │  63.09ms │  45.57ms │  -17.52ms │   357 │     0.0036% │ 1.38X            │
-│       26 │  64.67ms │  49.99ms │  -14.69ms │   341 │     0.0034% │ 1.29X            │
-│       25 │  64.89ms │  52.44ms │  -12.45ms │   682 │     0.0068% │ 1.24X            │
-│       15 │  62.73ms │  51.79ms │  -10.94ms │   681 │     0.0068% │ 1.21X            │
-│        5 │  64.35ms │  53.86ms │  -10.49ms │   394 │     0.0039% │ 1.19X            │
-│        4 │  62.83ms │  53.77ms │   -9.06ms │  1987 │     0.0199% │ 1.17X            │
-│       20 │  65.56ms │  56.36ms │   -9.20ms │   712 │     0.0071% │ 1.16X            │
-│        9 │  65.68ms │  56.87ms │   -8.82ms │  1331 │     0.0133% │ 1.16X            │
-│       24 │  62.58ms │  55.07ms │   -7.52ms │  1921 │     0.0192% │ 1.14X            │
-│       10 │  62.54ms │  56.31ms │   -6.24ms │   750 │     0.0075% │ 1.11X            │
-│        3 │  61.86ms │  59.44ms │   -2.42ms │  3920 │     0.0392% │ 1.04X            │
-│       18 │  63.50ms │  62.10ms │   -1.40ms │  3918 │     0.0392% │ 1.02X            │
-│       30 │  56.31ms │  56.06ms │ -243.50µs │   376 │     0.0038% │ 1.00X            │
-│       19 │  56.68ms │  58.00ms │   +1.32ms │  1380 │     0.0138% │ 1.02X (slowdown) │
-│       13 │  61.27ms │  92.50ms │  +31.23ms │  6768 │     0.0677% │ 1.51X (slowdown) │
-│        8 │  61.96ms │  97.34ms │  +35.38ms │  6908 │     0.0691% │ 1.57X (slowdown) │
-│       12 │  63.85ms │ 101.63ms │  +37.79ms │ 19564 │     0.1956% │ 1.59X (slowdown) │
-│        2 │  62.16ms │ 101.88ms │  +39.72ms │ 19385 │     0.1938% │ 1.64X (slowdown) │
-│        1 │  63.10ms │ 149.69ms │  +86.59ms │ 38758 │     0.3876% │ 2.37X (slowdown) │
-│        6 │  62.86ms │ 149.31ms │  +86.45ms │ 38772 │     0.3877% │ 2.38X (slowdown) │
-│        0 │  63.36ms │ 230.10ms │ +166.74ms │ 52060 │     0.5206% │ 3.63X (slowdown) │
+│       35 │  57.50ms │ 704.83µs │  -56.79ms │     0 │     0.0000% │ 81.57X           │
+│       28 │  61.89ms │   1.96ms │  -59.93ms │     0 │     0.0000% │ 31.62X           │
+│       34 │  62.44ms │   2.90ms │  -59.54ms │     3 │     0.0000% │ 21.55X           │
+│       29 │  62.84ms │   3.91ms │  -58.93ms │     9 │     0.0001% │ 16.07X           │
+│       21 │  55.01ms │   3.60ms │  -51.40ms │     0 │     0.0000% │ 15.26X           │
+│       33 │  62.79ms │   5.10ms │  -57.69ms │    12 │     0.0001% │ 12.31X           │
+│       23 │  63.84ms │   5.27ms │  -58.56ms │    13 │     0.0001% │ 12.10X           │
+│       14 │  63.90ms │  16.09ms │  -47.81ms │     0 │     0.0000% │ 3.97X            │
+│        7 │  65.12ms │  31.99ms │  -33.13ms │     0 │     0.0000% │ 2.04X            │
+│       32 │  65.22ms │  38.98ms │  -26.24ms │    63 │     0.0006% │ 1.67X            │
+│       11 │  65.31ms │  39.48ms │  -25.84ms │   123 │     0.0012% │ 1.65X            │
+│       17 │  64.52ms │  39.45ms │  -25.06ms │    65 │     0.0007% │ 1.64X            │
+│       27 │  65.38ms │  43.24ms │  -22.14ms │    75 │     0.0008% │ 1.51X            │
+│       22 │  55.72ms │  38.56ms │  -17.16ms │    58 │     0.0006% │ 1.45X            │
+│       31 │  60.41ms │  47.20ms │  -13.21ms │   158 │     0.0016% │ 1.28X            │
+│       26 │  61.39ms │  48.22ms │  -13.17ms │   341 │     0.0034% │ 1.27X            │
+│       25 │  62.32ms │  50.76ms │  -11.56ms │   682 │     0.0068% │ 1.23X            │
+│        5 │  61.67ms │  50.76ms │  -10.91ms │   394 │     0.0039% │ 1.21X            │
+│       20 │  65.68ms │  54.18ms │  -11.49ms │   712 │     0.0071% │ 1.21X            │
+│       15 │  62.30ms │  53.45ms │   -8.85ms │   681 │     0.0068% │ 1.17X            │
+│       10 │  64.74ms │  55.60ms │   -9.14ms │   750 │     0.0075% │ 1.16X            │
+│       16 │  61.28ms │  52.85ms │   -8.43ms │   357 │     0.0036% │ 1.16X            │
+│        4 │  64.44ms │  56.10ms │   -8.34ms │  1987 │     0.0199% │ 1.15X            │
+│        9 │  65.23ms │  57.31ms │   -7.92ms │  1331 │     0.0133% │ 1.14X            │
+│       24 │  61.98ms │  55.05ms │   -6.93ms │  1921 │     0.0192% │ 1.13X            │
+│       30 │  56.87ms │  52.52ms │   -4.34ms │   376 │     0.0038% │ 1.08X            │
+│       18 │  65.16ms │  61.76ms │   -3.40ms │  3918 │     0.0392% │ 1.06X            │
+│        3 │  63.01ms │  60.87ms │   -2.15ms │  3920 │     0.0392% │ 1.04X            │
+│       19 │  55.66ms │  56.23ms │ +565.37µs │  1380 │     0.0138% │ 1.01X (slowdown) │
+│       13 │  64.56ms │  92.75ms │  +28.19ms │  6768 │     0.0677% │ 1.44X (slowdown) │
+│        8 │  64.47ms │  94.63ms │  +30.16ms │  6908 │     0.0691% │ 1.47X (slowdown) │
+│       12 │  62.92ms │ 101.58ms │  +38.66ms │ 19564 │     0.1956% │ 1.61X (slowdown) │
+│        2 │  61.57ms │ 102.44ms │  +40.87ms │ 19385 │     0.1938% │ 1.66X (slowdown) │
+│        6 │  62.14ms │ 147.79ms │  +85.65ms │ 38772 │     0.3877% │ 2.38X (slowdown) │
+│        1 │  62.79ms │ 149.56ms │  +86.77ms │ 38758 │     0.3876% │ 2.38X (slowdown) │
+│        0 │  61.79ms │ 230.63ms │ +168.84ms │ 52060 │     0.5206% │ 3.73X (slowdown) │
 └──────────┴──────────┴──────────┴───────────┴───────┴─────────────┴──────────────────┘
 Slow Queries: 8 of 36
-Path: output/docs_with_fts_index_10000000.parquet
-Parquet Row Count: 10000000
+Parquet: output/docs_with_fts_index_10000000.parquet row count: 10000000
 ```
 
 [Embedding User-Defined Indexes in Apache Parquet Files]: https://datafusion.apache.org/blog/2025/07/14/user-defined-parquet-indexes/
