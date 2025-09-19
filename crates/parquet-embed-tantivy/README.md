@@ -146,9 +146,24 @@ In this case the optimized plan looks like this:
 +---------------+-------------------------------+
 ```
 
-In the test cases which return zero rows, this results in a speedup in the range
-of 2X to 70X. The variability arises from the time it takes to complete a full-text
-index search with no matches returned for different queries.
+In the test cases which return zero rows, this results in a maximum speedup of
+upto ~70X. The variability in speedup corresponds to the differences in the time
+it takes for full-text search to complete for different search terms.
+
+```text
+┌──────────┬──────────┬──────────┬──────────┬──────┬─────────────┬─────────────┐
+│ Query ID │ Baseline │ With FTS │     Diff │ Rows │ Selectivity │ Perf Change │
+├──────────┼──────────┼──────────┼──────────┼──────┼─────────────┼─────────────┤
+│       35 │  55.81ms │ 769.46µs │ -55.04ms │    0 │     0.0000% │ 72.53X      │
+│       28 │  65.03ms │   2.06ms │ -62.98ms │    0 │     0.0000% │ 31.60X      │
+│       21 │  56.71ms │   3.63ms │ -53.08ms │    0 │     0.0000% │ 15.61X      │
+│       14 │  61.57ms │  16.56ms │ -45.01ms │    0 │     0.0000% │ 3.72X       │
+│        7 │  63.89ms │  32.86ms │ -31.02ms │    0 │     0.0000% │ 1.94X       │
+└──────────┴──────────┴──────────┴──────────┴──────┴─────────────┴─────────────┘
+Slow Queries: 0 of 5
+Path: output/docs_with_fts_index_10000000.parquet
+Parquet Row count: 10000000
+```
 
 ## Results
 
