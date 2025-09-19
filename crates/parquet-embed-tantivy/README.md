@@ -117,18 +117,15 @@ The optimized plan now looks like this:
 
 ### Special Case: Short-Circuiting Zero Matches
 
-```sql
-SELECT id,
-       title
-FROM t
-WHERE title LIKE '%cow cow%'
-```
-
-If the full text index yields no matches, and since the query contains no other
-predicates there will be zero rows in the final result. This case is optimized
-as a no-op, and does not attempt to read the Parquet data source.
+When no matches are found in the full-text index, and if the query contains no
+other filters, the final result will be empty. This case is optimized as a no-op,
+and returns early without ever scanning the Parquet data source.
 
 ```text
+> SELECT id, title
+    FROM t
+   WHERE title LIKE '%cow cow%';
+
 +----+-------+
 | id | title |
 +----+-------+
