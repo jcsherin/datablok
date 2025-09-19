@@ -290,7 +290,7 @@ TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:resolv
 TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index: parquet_embed_tantivy::index: close time.busy=30.8ms time.idle=167ns query_id=7 sql=SELECT * FROM t WHERE title LIKE '%runtime runtime%' run_type="optimized"
 ```
 
-## About Benchmarking Data
+## Benchmarking Methodology
 
 ### 1. Query Generation
 
@@ -378,6 +378,11 @@ SELECT MIN(LENGTH(title))                             AS min_length,
 FROM
     'output/docs_with_fts_index_10000000.parquet';
 ```
+
+### 3. Benchmarking Environment
+
+All measurements were run on Apple M3 Pro (36 GB RAM, NVMe SSD). A warm-up run
+is performed before the timed measurements to populate the OS page cache.
 
 ## Summary
 
