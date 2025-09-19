@@ -254,6 +254,7 @@ TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:search
 TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:resolve_hits_to_id_values: parquet_embed_tantivy::index: close time.busy=59.5ms time.idle=208ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
 TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index: parquet_embed_tantivy::index: close time.busy=145ms time.idle=166ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
 ```
+
 ### 3. Creating a Large IN Predicate is Fast
 
 In DataFusion the time taken to create an `id IN (...)` predicate for 52K rows
@@ -263,6 +264,56 @@ and creating the physical plan completes in ~6ms.
 TRACE query_comparison:run:execute_sql:scan:ids_to_predicate: parquet_embed_tantivy::index: close time.busy=6.27ms time.idle=1.54µs query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
 TRACE query_comparison:run:execute_sql:scan:create_optimized_physical_plan: parquet_embed_tantivy::index: close time.busy=114µs time.idle=459ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
 ```
+
+### 4. Zero Results are Extremely Fast
+
+The `EmptyExec` optimization speeds up queries that find no matches in the
+full-text index (when other filtering predicates are not present) by 2X to 70X,
+depending on the search terms.
+
+```text
+┌──────────┬──────────┬──────────┬──────────┬──────┬─────────────┬─────────────┐
+│ Query ID │ Baseline │ With FTS │     Diff │ Rows │ Selectivity │ Perf Change │
+├──────────┼──────────┼──────────┼──────────┼──────┼─────────────┼─────────────┤
+│       35 │  56.89ms │ 816.00µs │ -56.08ms │    0 │     0.0000% │ 69.72X      │
+│       28 │  62.21ms │   2.04ms │ -60.17ms │    0 │     0.0000% │ 30.45X      │
+│       21 │  56.02ms │   3.50ms │ -52.52ms │    0 │     0.0000% │ 15.99X      │
+│       14 │  62.48ms │  16.53ms │ -45.95ms │    0 │     0.0000% │ 3.78X       │
+│        7 │  61.40ms │  30.77ms │ -30.63ms │    0 │     0.0000% │ 2.00X       │
+└──────────┴──────────┴──────────┴──────────┴──────┴─────────────┴─────────────┘
+Slow Queries: 0 of 5
+Path: output/docs_with_fts_index_10000000.parquet
+Parquet Row Count: 10000000
+```
+
+The variability comes from the time it takes Tantivy the determine that search
+term has no matches.
+
+When examining trace for slowest in this group which is query 7, we can see that
+querying the Tantivy full-text index takes ~30ms to complete. This is ~100% of
+the time for executing query 7.
+
+For example, Query 35 (~70X speedup) is fast because the index search completes
+in 669µs.
+
+```text
+TRACE query_comparison:run:execute_sql:scan:extract_title_like_pattern: parquet_embed_tantivy::index: close time.busy=167ns time.idle=125ns query_id=35 sql=SELECT * FROM t WHERE title LIKE '%idempotency idempotency%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:create_index_query: parquet_embed_tantivy::index: close time.busy=1.42µs time.idle=166ns query_id=35 sql=SELECT * FROM t WHERE title LIKE '%idempotency idempotency%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:search_execute_hits_and_count: parquet_embed_tantivy::index: close time.busy=478µs time.idle=167ns query_id=35 sql=SELECT * FROM t WHERE title LIKE '%idempotency idempotency%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:resolve_hits_to_id_values: parquet_embed_tantivy::index: close time.busy=333ns time.idle=126ns query_id=35 sql=SELECT * FROM t WHERE title LIKE '%idempotency idempotency%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index: parquet_embed_tantivy::index: close time.busy=669µs time.idle=124ns query_id=35 sql=SELECT * FROM t WHERE title LIKE '%idempotency idempotency%' run_type="optimized"
+```
+On the other hand, Query 7 (2X speedup) takes ~30ms, which accounts for nearly
+100% of the total query time.
+
+```text
+TRACE query_comparison:run:execute_sql:scan:extract_title_like_pattern: parquet_embed_tantivy::index: close time.busy=166ns time.idle=334ns query_id=7 sql=SELECT * FROM t WHERE title LIKE '%runtime runtime%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:create_index_query: parquet_embed_tantivy::index: close time.busy=18.8µs time.idle=167ns query_id=7 sql=SELECT * FROM t WHERE title LIKE '%runtime runtime%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:search_execute_hits_and_count: parquet_embed_tantivy::index: close time.busy=30.5ms time.idle=250ns query_id=7 sql=SELECT * FROM t WHERE title LIKE '%runtime runtime%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index:resolve_hits_to_id_values: parquet_embed_tantivy::index: close time.busy=208ns time.idle=251ns query_id=7 sql=SELECT * FROM t WHERE title LIKE '%runtime runtime%' run_type="optimized"
+TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index: parquet_embed_tantivy::index: close time.busy=30.8ms time.idle=167ns query_id=7 sql=SELECT * FROM t WHERE title LIKE '%runtime runtime%' run_type="optimized"
+```
+
 
 The geometric mean of speedup across 36 queries used for testing is 1.68X.
 
