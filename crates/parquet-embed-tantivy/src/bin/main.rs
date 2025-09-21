@@ -147,8 +147,6 @@ async fn main() -> Result<()> {
         args.input_dir.to_str().unwrap()
     );
 
-
-
     Ok(())
 }
 
@@ -233,7 +231,6 @@ fn print_summary_table(mut results: Vec<(QueryComparisonMetrics, &str)>, parquet
 
     println!("{table}");
     println!("Slow Queries: {slow_query_count} of {query_count}");
-
 }
 
 async fn count_parquet_rows(ctx: &SessionContext, path: &str) -> Result<usize> {
