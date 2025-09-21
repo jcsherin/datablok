@@ -17,19 +17,16 @@ use tracing_subscriber::fmt::format::FmtSpan;
 
 #[derive(Parser, Debug)]
 #[command(name = "main")]
-#[command(about = "Run SQL LIKE queries with a supporting full-text index")]
-#[command(
-    long_about = "Optimize LIKE queries with a full-text index embedded in the parquet file."
-)]
+#[command(about = "Run benchmark on Parquet file with embedded Tantivy full-text index.")]
 #[command(version)]
 struct Args {
-    /// Input directory for generated parquet files
+    /// Parquet file with an embedded Tantivy full-text index
     #[arg(short, long)]
-    input_dir: PathBuf,
+    path: PathBuf,
 
-    /// Optional list of query identifiers to execute (e.g. --queries 1,3,9)
+    /// Optional, comma-separated list of query IDs to run (e.g. 1,3,9)
     #[arg(short, long, value_delimiter = ',')]
-    queries: Vec<u32>,
+    filter_queries: Vec<u32>,
 }
 
 /// These are the stages for preparing the index as a sequence of bytes.
@@ -79,7 +76,7 @@ async fn main() -> Result<()> {
     let arrow_docs_schema = ArrowDocSchema::default();
 
     let full_text_index = Arc::new(FullTextIndex::try_open(
-        &args.input_dir,
+        &args.path,
         tantivy_docs_schema.clone(),
         arrow_docs_schema.clone(),
     )?);
@@ -94,7 +91,7 @@ async fn main() -> Result<()> {
     ctx_baseline
         .register_parquet(
             "t",
-            args.input_dir.to_str().unwrap(),
+            args.path.to_str().unwrap(),
             ParquetReadOptions::default(),
         )
         .await?;
@@ -112,7 +109,9 @@ async fn main() -> Result<()> {
     let filtered_queries = search_phrases
         .iter()
         .enumerate()
-        .filter(|(id, _)| args.queries.is_empty() || args.queries.contains(&(*id as u32)))
+        .filter(|(id, _)| {
+            args.filter_queries.is_empty() || args.filter_queries.contains(&(*id as u32))
+        })
         .collect_vec();
 
     // Warmup the OS page caches, and negate disk I/O latency
@@ -132,19 +131,15 @@ async fn main() -> Result<()> {
         results.push((metrics, sql));
     }
 
-    let total_row_count =
-        count_parquet_rows(&ctx_optimized, args.input_dir.to_str().unwrap()).await?;
+    let total_row_count = count_parquet_rows(&ctx_optimized, args.path.to_str().unwrap()).await?;
 
     let geometric_mean_speedup = calculate_geometric_mean(&results);
-    println!(
-        "Geometric mean of speedup across all queries: {:.2}X",
-        geometric_mean_speedup
-    );
+    println!("Geometric mean of speedup across all queries: {geometric_mean_speedup:.2}X",);
 
     print_summary_table(results, total_row_count);
     println!(
         "Parquet: {} row count: {total_row_count}",
-        args.input_dir.to_str().unwrap()
+        args.path.to_str().unwrap()
     );
 
     Ok(())
