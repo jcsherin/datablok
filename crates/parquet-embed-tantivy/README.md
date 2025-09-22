@@ -2,7 +2,7 @@
 
 > Parquet tolerates unknown bytes within the file body and permits arbitrary key/value pairs in its footer metadata. These two features enable embedding user-defined indexes directly in the file—no extra files, no format forks, and no compatibility breakage.
 >
-> From DataFusion blog post: [Embedding User-Defined Indexes in Apache Parquet Files]
+> From the DataFusion blog post: [Embedding User-Defined Indexes in Apache Parquet Files]
 
 This demo extends a Parquet file by embedding a [Tantivy full-text search index]
 inside it. A custom [DataFusion TableProvider] implementation uses the
@@ -17,14 +17,14 @@ FROM t
 WHERE title LIKE '%dairy cow%'
 ```
 
-Result Summary:
+Summary of findings:
 
 * The full-text index provides a 2X to 80X speedup for queries that return zero
   or very few matching rows.
-* The crossover point is around 0.04% of the total rows. When queries return more
-  rows it is slower to use the full-text index, while a full table scan is faster.
-* The Parquet file size increases by 80% when embedding the full-text index for
-  a single text column with an average length of 42.
+* When queries return more rows, a full table scan is better. The crossover point
+  is ~0.04% of the total rows.
+* The Parquet file size increases by 80% when we index a single text column with
+  an average length of 42 (3 - 13 words).
 * The geometric mean of speedup across all 36 benchmark queries is 1.90X.
 
 [Embedding User-Defined Indexes in Apache Parquet Files]: https://datafusion.apache.org/blog/2025/07/14/user-defined-parquet-indexes/
@@ -78,22 +78,20 @@ Here is the physical plan for this query:
 +---------------+-------------------------------+
 ```
 
-We can see in the above physical plan that even though the predicate is pushdown
-to the Parquet data source, a `FilterExec` with the exact same predicate sits
-above it to guarantee non-matching rows are filtered out.
+A `FilterExec` is required to filter out the rows matching the predicate because
+this filter is not effective for pruning rows at the data source.
 
 [Sargable (Search ARGument ABLE)]: https://en.wikipedia.org/wiki/Sargable
 
 ## Query Optimization using Full-Text Index
 
-The core of the optimization is using the full-text index search results to
-rewrite the original predicate into a highly efficient sargable one.
+The core optimization consists of the following steps.
 
-### 1. Transforming LIKE Predicate into a Tantivy Query
+### 1. Transforming the LIKE Predicate into a Tantivy Query
 
 First, the pattern is extracted from the original predicate. For example:
-`title LIKE '%dairy cow%'`, is converted into a list of search terms:
-`[dairy, cow]`. This list is then use to create a [Tantivy Query].
+`title LIKE '%dairy cow%'`, and it is tokenized into a list of search terms:
+`[dairy, cow]`. Then this list is used to create a [Tantivy Query].
 
 ```rust
 PhraseQuery::new(vec![
@@ -137,9 +135,9 @@ The optimized plan now looks like this:
 
 ### Special Case: Short-Circuiting Zero Matches
 
-When no matches are found in the full-text index, and if the query contains no
-other filters, the final result will be empty. This case is optimized as a no-op,
-and returns early without ever scanning the Parquet data source.
+When no matches are returned by the full-text index, then zero rows are returned
+(because there are no other filters). Here we skip scanning the Parquet data
+source making this extremely efficient.
 
 ```text
 > SELECT id, title
@@ -166,13 +164,13 @@ In this case the optimized plan looks like this:
 +---------------+-------------------------------+
 ```
 
-## Performance
+## Performance Notes
 
-### 1. Full-Text Index Setup Cost
+### 1. Full-Text Index One-Time Cost
 
-There is a one-time cost for reading the embedded full-text from the Parquet file
+There is a one-time cost for reading the embedded full-text index from the Parquet file
 and initializing it for querying. For a tantivy index containing 10 million
-documents, it takes ~130ms (~411 MB).
+documents, it takes ~128ms (~411 MB).
 
 ```text
 TRACE open:read_directory:index_offset: parquet_embed_tantivy::index: close time.busy=15.7µs time.idle=750ns
@@ -181,11 +179,11 @@ TRACE open:read_directory:deserialize_data_block: parquet_embed_tantivy::index: 
 TRACE open:read_directory: parquet_embed_tantivy::index: close time.busy=128ms time.idle=416ns
 ```
 
-### 2. Full Table Scan is Faster when Index Matches Many Rows
+### 2. Full Table Scans are Faster when the Full-Text Index Matches Many Rows
 
 If the full-text index matches a lot of rows, the performance bottleneck becomes
 resolving the matching documents to a list of `id` values. A full-table scan has
-a better, stable performance in this case.
+consistent, stable performance in comparison.
 
 ```text
 ┌──────────┬──────────┬──────────┬───────────┬───────┬─────────────┬──────────────────┐
@@ -205,11 +203,11 @@ Path: output/docs_with_fts_index_10000000.parquet
 Parquet Row Count: 10000000
 ```
 
-In this trace for query 0 which returns 52060 rows, search the full-text completed
+In the following trace Query 0 returns 52060 rows. Searching the full-text completed
 in ~84ms and resolving the search results into a list of
 `id` values takes another
-~60ms. The total time spend in full-text search is ~145ms, whereas a full-table
-scan completes in ~60ms.
+~60ms. The total time spend in full-text search is ~145ms. In comparison, the
+full-table scan completes in ~63ms.
 
 ```text
 TRACE query_comparison:run:execute_sql:scan:extract_title_like_pattern: parquet_embed_tantivy::index: close time.busy=166ns time.idle=417ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
@@ -221,19 +219,21 @@ TRACE query_comparison:run:execute_sql:scan:query_result_ids:search_index: parqu
 
 ### 3. Creating a Large IN Predicate is Fast
 
-In DataFusion the time taken to create an `id IN (...)` predicate for 52K rows
-and creating the physical plan completes in ~6ms.
+In DataFusion the time taken to create an
+`id IN (...)` predicate for 52K rows (Query 0)
+and creating a physical plan completes in ~6ms.
 
 ```text
 TRACE query_comparison:run:execute_sql:scan:ids_to_predicate: parquet_embed_tantivy::index: close time.busy=6.27ms time.idle=1.54µs query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
 TRACE query_comparison:run:execute_sql:scan:create_optimized_physical_plan: parquet_embed_tantivy::index: close time.busy=114µs time.idle=459ns query_id=0 sql=SELECT * FROM t WHERE title LIKE '%concurrency concurrency%' run_type="optimized"
 ```
 
+_Note: The predicate is already in AST form, and does not have to be parsed._
+
 ### 4. Zero Results are Extremely Fast
 
-The `EmptyExec` optimization speeds up queries that find no matches in the
-full-text index (when other filtering predicates are not present) by 2X to 70X,
-depending on the search terms.
+The `EmptyExec` optimization speeds up queries that find zero matches in the
+full-text index by 2X to 70X. 
 
 ```text
 ┌──────────┬──────────┬──────────┬──────────┬──────┬─────────────┬─────────────┐
@@ -291,7 +291,7 @@ Even though there is variability in execution time for various queries using the
 full-text index, it is observed that the Parquet full table scan has stable
 predictable performance.
 
-_(The Parquet dataset used in for benchmarking contains 10 million rows.)_
+_(The Parquet dataset used for benchmarking contains 10 million rows)_
 
 ```text
 ┌──────────┬──────────┬──────────┬───────────┬───────┬─────────────┬──────────────────┐
@@ -337,9 +337,10 @@ _(The Parquet dataset used in for benchmarking contains 10 million rows.)_
 Slow Queries: 8 of 36
 Parquet: output/docs_with_fts_index_10000000.parquet row count: 10000000
 ```
+
 ## Parquet File on Disk
 
-The table schema used for generating the Parquet file is:
+The table schema of the Parquet file used for benchmarking is:
 
 ```text
 +-------------+-----------+-------------+
@@ -350,7 +351,7 @@ The table schema used for generating the Parquet file is:
 +-------------+-----------+-------------+
 ```
 
-The documents indexed in Tantivy have an identical schema:
+The corresponding schema for the Tantivy-full text index is:
 
 ```rust
 let mut schema_builder = SchemaBuilder::new();
@@ -365,11 +366,11 @@ The Parquet file with the embedded Tantivy full-text index is consistently ~80%
 larger than the parquet file without the index.
 
 ```text
-// 10 million rows
+// contains 10 million rows
 515M    output/docs_10000000.parquet
 926M    output/docs_with_fts_index_10000000.parquet
 
-// 1 million rows
+// contains 1 million rows
  52M    output/docs_1000000.parquet
  95M    output/docs_with_fts_index_1000000.parquet
 ```
@@ -433,7 +434,7 @@ Query 35: SELECT * FROM t WHERE title LIKE '%idempotency idempotency%'
 
 ### 2. Generated Parquet Data
 
-The Parquet file used for benchmarking contains 10 million programmatically
+The Parquet file used for benchmarking contains 10 million procedurally
 generated rows, with an embedded Tantivy full-text index of the same size. The
 `title` column values are randomly generated. However, given the same initial
 seed the generation process is fully deterministic and reproducible.
