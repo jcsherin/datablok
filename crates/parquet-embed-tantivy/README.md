@@ -390,15 +390,19 @@ The geometric mean of speedup across all queries is 1.90X. For a typical query
 this translates into a ~47% reduction in query execution time. 28 of 36 queries
 finished faster, while 8 queries ran slower.
 
-The optimization is effective for highly selective queries (returning only few
-or zero results), delivering up to a 80X speedup. It begins to underperform a
-full-table scan when the number of matching rows become larger. In this dataset
-this happens at a selectivity of ~0.04% or higher.
+Using the full-text index is faster only when zero or few matches
+are returned by the index. In the benchmark queries, the crossover point is
+~0.04% (~4000 rows in a 10 million row dataset). For queries which returns more
+matches, it is better to perform a full-table scan.
 
-The full table scan substring matching performance is stable across all 36
-queries.
+The Parquet file is 80% larger when embedding the Tantivy full-text index for a
+text column which has an average length of 42.
 
-_(The Parquet dataset contains 10 million rows.)_
+Even though there is variability in execution time for various queries using the
+full-text index, it is observed that the Parquet full table scan has stable
+predictable performance.
+
+_(The Parquet dataset used in for benchmarking contains 10 million rows.)_
 
 ```text
 ┌──────────┬──────────┬──────────┬───────────┬───────┬─────────────┬──────────────────┐
