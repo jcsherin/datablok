@@ -93,7 +93,7 @@ rewrite the original predicate into a highly efficient sargable one.
 
 First, the pattern is extracted from the original predicate. For example:
 `title LIKE '%dairy cow%'`, is converted into a list of search terms:
-`[dairy ,cow]`. This list is then use to create a [Tantivy Query].
+`[dairy, cow]`. This list is then use to create a [Tantivy Query].
 
 ```rust
 PhraseQuery::new(vec![
@@ -181,7 +181,7 @@ TRACE open:read_directory:deserialize_data_block: parquet_embed_tantivy::index: 
 TRACE open:read_directory: parquet_embed_tantivy::index: close time.busy=128ms time.idle=416ns
 ```
 
-### 2. Low Selectivity Queries are a Bottleneck
+### 2. Full Table Scan is Faster when Index Matches Many Rows
 
 If the full-text index matches a lot of rows, the performance bottleneck becomes
 resolving the matching documents to a list of `id` values. A full-table scan has
