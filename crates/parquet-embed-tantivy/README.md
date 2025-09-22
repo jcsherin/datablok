@@ -27,6 +27,9 @@ Summary of findings:
   an average length of 42 (3 - 13 words).
 * The geometric mean of speedup across all 36 benchmark queries is 1.90X.
 
+For instructions on how to run the demo, see the [How to Run](#how-to-run)
+section below.
+
 [Embedding User-Defined Indexes in Apache Parquet Files]: https://datafusion.apache.org/blog/2025/07/14/user-defined-parquet-indexes/
 
 [Tantivy full-text search index]: https://github.com/quickwit-oss/tantivy
@@ -233,7 +236,7 @@ _Note: The predicate is already in AST form, and does not have to be parsed._
 ### 4. Zero Results are Extremely Fast
 
 The `EmptyExec` optimization speeds up queries that find zero matches in the
-full-text index by 2X to 70X. 
+full-text index by 2X to 70X.
 
 ```text
 ┌──────────┬──────────┬──────────┬──────────┬──────┬─────────────┬─────────────┐
@@ -469,3 +472,28 @@ FROM
 All measurements were run on Apple M3 Pro (36 GB RAM, NVMe SSD). A warm-up run
 is performed before the timed measurements to populate the OS page cache.
 
+## How to Run
+
+### 1. Generate a test Parquet dataset
+
+The following command generates two Parquet files in the `output/` directory -
+one which is a regular parquet file, and another with the same rows but also
+contains an embedded Tantivy full-text index.
+
+```text
+cargo run -p parquet-embed-tantivy --release --bin parquet_gen -- -t <total-rows>
+```
+
+### 2. Run the Benchmark
+
+Run all 36 the benchmark queries like:
+
+```text
+cargo run --release -p parquet-embed-tantivy --bin main -- -p <path-to-parquet-file-with-full-text-index>
+```
+
+Alternatively you can run only specific queries like:
+
+```text
+cargo run --release -p parquet-embed-tantivy --bin main -- -p <path-to-parquet-file-with-full-text-index> -f 0,1,2
+```
