@@ -17,6 +17,16 @@ FROM t
 WHERE title LIKE '%dairy cow%'
 ```
 
+Result Summary:
+
+* The full-text index provides a 2X to 80X speedup for queries that return zero
+  or very few matching rows.
+* The crossover point is around 0.04% of the total rows. When queries return more
+  rows it is slower to use the full-text index, while a full table scan is faster.
+* The Parquet file size increases by 80% when embedding the full-text index for
+  a single text column with an average length of 42.
+* The geometric mean of speedup across all 36 benchmark queries is 1.90X.
+
 ## Leading Wildcard Forces a Full-Table Scan
 
 The predicate
